@@ -50,6 +50,24 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# -------------------- REVORA animated loading screen --------------------
+# Show once per browser session and fade away automatically.
+if not st.session_state.get("revora_splash_shown", False):
+    st.markdown("""
+    <style>
+      .revora-splash{position:fixed;inset:0;z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;background:radial-gradient(circle at 50% 42%,#245e45 0%,#123b2b 42%,#071d15 100%);color:#fff;text-align:center;animation:revoraSplashFade 4.2s ease-in-out forwards;pointer-events:none;min-height:100vh;opacity:1;visibility:visible}
+      .revora-splash:before,.revora-splash:after{content:"";position:absolute;width:260px;height:260px;border:1px solid rgba(201,244,211,.32);border-radius:50%;box-shadow:0 0 32px rgba(130,232,164,.12),inset 0 0 28px rgba(130,232,164,.08);animation:revoraRing 9s linear infinite}
+      .revora-splash:after{width:350px;height:350px;animation-direction:reverse}
+      .revora-splash-core{position:relative;z-index:2;padding:24px}.revora-splash-logo{font-size:clamp(2.5rem,8vw,4.5rem);font-weight:850;letter-spacing:.12em;margin:0;color:#fff}.revora-splash-leaf{display:inline-block;color:#a7f3bd;margin-right:.12em}.revora-splash-tag{margin-top:10px;font-size:1rem;letter-spacing:.12em;color:#d8f3df}
+      .revora-orbit{position:absolute;z-index:3;font-size:2rem;filter:drop-shadow(0 0 12px rgba(170,255,194,.4))}.revora-orbit.one{animation:revoraFloatOne 3.2s ease-in-out infinite;transform:translate(-125px,-90px)}.revora-orbit.two{animation:revoraFloatTwo 3.8s ease-in-out infinite;transform:translate(130px,-65px)}.revora-orbit.three{animation:revoraFloatThree 3.4s ease-in-out infinite;transform:translate(-105px,95px)}.revora-orbit.four{animation:revoraFloatFour 4s ease-in-out infinite;transform:translate(115px,95px)}
+      .revora-loading-dots{display:flex;justify-content:center;gap:9px;margin-top:30px}.revora-loading-dots span{width:8px;height:8px;border-radius:50%;background:#b5f4c7;animation:revoraDot 1.1s ease-in-out infinite}.revora-loading-dots span:nth-child(2){animation-delay:.15s}.revora-loading-dots span:nth-child(3){animation-delay:.3s}
+      @keyframes revoraSplashFade{0%,82%{opacity:1;visibility:visible}100%{opacity:0;visibility:hidden;pointer-events:none}}@keyframes revoraRing{to{transform:rotate(360deg)}}@keyframes revoraFloatOne{0%,100%{margin-left:0;margin-top:0}50%{margin-left:-12px;margin-top:-15px}}@keyframes revoraFloatTwo{0%,100%{margin-left:0;margin-top:0}50%{margin-left:13px;margin-top:-10px}}@keyframes revoraFloatThree{0%,100%{margin-left:0;margin-top:0}50%{margin-left:-10px;margin-top:12px}}@keyframes revoraFloatFour{0%,100%{margin-left:0;margin-top:0}50%{margin-left:10px;margin-top:13px}}@keyframes revoraDot{0%,80%,100%{opacity:.35;transform:translateY(0)}40%{opacity:1;transform:translateY(-7px)}}
+      @media(prefers-reduced-motion:reduce){.revora-splash,.revora-splash:before,.revora-splash:after,.revora-orbit,.revora-loading-dots span{animation-duration:.01ms!important}}
+    </style>
+    <div class="revora-splash" aria-label="REVORA loading"><span class="revora-orbit one">♻️</span><span class="revora-orbit two">🌿</span><span class="revora-orbit three">📦</span><span class="revora-orbit four">💚</span><div class="revora-splash-core"><h1 class="revora-splash-logo"><span class="revora-splash-leaf">✦</span>REVORA</h1><div class="revora-splash-tag">GIVE ITEMS A SECOND LIFE</div><div class="revora-loading-dots"><span></span><span></span><span></span></div></div></div>
+    """, unsafe_allow_html=True)
+    st.session_state["revora_splash_shown"] = True
+
 # -------------------- Product recommendation engine --------------------
 
 # Built-in, validated fallback keeps the Product Explorer running if products.csv is
@@ -484,7 +502,7 @@ with tab_ai:
                 with st.spinner("REVORA is listening and transcribing your question..."):
                     audio_bytes = audio_prompt.getvalue()
                     transcription_response = client.models.generate_content(
-                        model="gemini-2.5-flash",
+                        model="gemini-3.8-flash",
                         contents=[
                             types.Part.from_bytes(
                                 data=audio_bytes,
@@ -522,7 +540,7 @@ Your goals:
             with st.chat_message("assistant"):
                 with st.spinner("REVORA AI is thinking..."):
                     response = client.models.generate_content(
-                        model="gemini-3.5-flash-lite",
+                        model="gemini-3.8-flash",
                         contents=system_context + "\n\nConversation so far:\n" + transcript,
                     )
                     answer = response.text or "I couldn't generate a response this time. Please try asking in a different way."
