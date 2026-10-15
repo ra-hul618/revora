@@ -19,53 +19,9 @@ BASE_DIR = Path(__file__).parent
 DATA_PATH = BASE_DIR / "products.csv"
 DB_PATH = BASE_DIR / "revora_marketplace.db"
 
-# One-time branded splash screen for the first page load in this browser session.
-if not st.session_state.get("revora_splash_seen", False):
-    st.session_state["revora_splash_seen"] = True
-    st.markdown("""
-    <div class="revora-splash" aria-label="REVORA loading screen">
-      <div class="splash-content">
-        <svg class="revora-mark" viewBox="0 0 120 120" role="img" aria-label="REVORA leaf logo">
-          <defs>
-            <linearGradient id="revoraLeaf" x1="0" y1="1" x2="1" y2="0">
-              <stop offset="0%" stop-color="#a8d977"/>
-              <stop offset="100%" stop-color="#e0f5bd"/>
-            </linearGradient>
-          </defs>
-          <circle cx="60" cy="60" r="55" fill="none" stroke="#477a54" stroke-width="2"/>
-          <path d="M88 26C55 27 30 41 29 65c-1 16 11 27 25 25 24-3 34-31 34-64Z" fill="url(#revoraLeaf)"/>
-          <path d="M28 94C43 73 59 57 82 39" fill="none" stroke="#f5ffe9" stroke-width="4" stroke-linecap="round"/>
-          <path d="M49 70c-1-10-7-17-16-20M61 58c9 1 16 5 20 12" fill="none" stroke="#f5ffe9" stroke-width="3" stroke-linecap="round"/>
-        </svg>
-        <div class="splash-wordmark">REVORA</div>
-        <div class="splash-tagline">RETHINK · REUSE · REVIVE</div>
-        <div class="splash-loader"><span></span></div>
-        <div class="splash-loading-text">Building a more circular tomorrow…</div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
 st.markdown("""
 <style>
     .stApp { background: #f6f8f3; }
-    .revora-splash {
-        position: fixed; inset: 0; z-index: 999999; display: flex;
-        align-items: center; justify-content: center; text-align: center;
-        background: radial-gradient(circle at 50% 35%, #1f573b 0%, #103523 52%, #081c13 100%);
-        color: #f4ffe9; animation: revoraSplashFade 3s ease forwards;
-        pointer-events: none;
-    }
-    .splash-content { display:flex; flex-direction:column; align-items:center; padding:24px; animation: revoraRise .8s ease both; }
-    .revora-mark { width:112px; height:112px; filter: drop-shadow(0 0 22px #80bf7966); animation: revoraPulse 1.5s ease-in-out infinite; }
-    .splash-wordmark { margin-top:18px; font-size:clamp(2.6rem, 7vw, 4.5rem); font-weight:850; letter-spacing:.22em; padding-left:.22em; color:#f4ffe9; }
-    .splash-tagline { margin-top:5px; color:#b9d9b8; font-size:.78rem; letter-spacing:.24em; }
-    .splash-loader { width:180px; height:3px; margin-top:30px; overflow:hidden; background:#ffffff24; border-radius:10px; }
-    .splash-loader span { display:block; width:40%; height:100%; border-radius:10px; background:#b5e58c; animation: revoraLoad 1.2s ease-in-out infinite; }
-    .splash-loading-text { margin-top:13px; color:#c8ddca; font-size:.85rem; }
-    @keyframes revoraSplashFade { 0%,72% { opacity:1; visibility:visible; } 100% { opacity:0; visibility:hidden; } }
-    @keyframes revoraPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.06); } }
-    @keyframes revoraLoad { 0% { transform:translateX(-110%); } 100% { transform:translateX(360%); } }
-    @keyframes revoraRise { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
     [data-testid="stSidebar"] { background: #eaf1e7; }
     .hero {
         padding: 1.6rem 1.8rem; border-radius: 22px;
@@ -478,11 +434,11 @@ with tab_explore:
         st.write("M = materials and sourcing; L = durability and lifespan; P = packaging; U = usage and reuse; E = repairability and end-of-life.")
         st.warning("Values are illustrative demo inputs, not measured carbon footprints or certified environmental claims.")
 
-# -------------------- Gemini AI chatbox --------------------
+# -------------------- Gemini AI chatbox with voice --------------------
 
 with tab_ai:
     st.markdown("## 🤖 Chat with REVORA AI")
-    st.write("Ask about reducing waste, choosing reusable products, repairing items, or using the Donate & Request marketplace.")
+    st.write("Type or speak about reducing waste, choosing reusable products, repairing items, or using the Donate & Request marketplace.")
     st.markdown("<div class='marketplace-note'><b>REVORA AI</b> gives practical sustainability guidance. It can make mistakes, so verify important product, recycling, and safety information locally.</div>", unsafe_allow_html=True)
 
     if "revora_chat_history" not in st.session_state:
@@ -490,22 +446,28 @@ with tab_ai:
 
     chat_col, clear_col = st.columns([5, 1])
     with chat_col:
-        st.caption("Powered by Google's Gemini API")
+        st.caption("Powered by Google's Gemini API · Voice input and spoken replies")
     with clear_col:
         if st.button("Clear chat", key="clear_revora_chat"):
             st.session_state.revora_chat_history = []
+            st.session_state.pop("revora_last_answer", None)
             st.rerun()
 
     for message in st.session_state.revora_chat_history:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    prompt = st.chat_input("Ask REVORA anything about sustainability...", key="revora_chat_input")
-    if prompt:
-        st.session_state.revora_chat_history.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+    st.markdown("#### 🎙️ Ask by voice")
+    st.caption("Record your question, then press **Send voice question**. Your browser may ask for microphone permission.")
+    audio_prompt = st.audio_input("Record your question", key="revora_audio_input")
+    voice_col, text_col = st.columns([1, 2])
+    with voice_col:
+        send_voice = st.button("🎙️ Send voice question", key="send_revora_voice", use_container_width=True)
+    with text_col:
+        st.caption("You can also type below. Spoken answers use your browser's built-in voice and may depend on available voices.")
+    prompt = st.chat_input("Or type your question about sustainability...", key="revora_chat_input")
 
+    if prompt or (send_voice and audio_prompt is not None):
         try:
             try:
                 api_key = st.secrets["GEMINI_API_KEY"]
@@ -515,7 +477,31 @@ with tab_ai:
                 raise KeyError("GEMINI_API_KEY is not configured")
 
             from google import genai
+            from google.genai import types
             client = genai.Client(api_key=api_key)
+
+            if not prompt and send_voice and audio_prompt is not None:
+                with st.spinner("REVORA is listening and transcribing your question..."):
+                    audio_bytes = audio_prompt.getvalue()
+                    transcription_response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=[
+                            types.Part.from_bytes(
+                                data=audio_bytes,
+                                mime_type=audio_prompt.type or "audio/wav",
+                            ),
+                            "Transcribe the spoken question exactly as clearly as possible. Return only the transcription, without commentary.",
+                        ],
+                    )
+                    prompt = (transcription_response.text or "").strip()
+                if not prompt:
+                    st.warning("I couldn't understand that recording. Please try again or type your question.")
+                    st.stop()
+                st.caption("Voice transcription: " + prompt)
+
+            st.session_state.revora_chat_history.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
             recent_history = st.session_state.revora_chat_history[-12:]
             transcript = "\n\n".join(
@@ -530,7 +516,7 @@ Your goals:
 - Do not claim a product is certified or a local item is available unless verified in the app.
 - Encourage users to use REVORA's Donate & Request tabs when they want to pass on or request usable items.
 - For recycling questions, explain that local rules differ and suggest checking the local authority.
-- Keep answers friendly, clear, and reasonably concise.
+- Keep answers friendly, clear, and reasonably concise, suitable for being read aloud.
 - Do not ask users to share passwords, API keys, or sensitive personal information.
 """
             with st.chat_message("assistant"):
@@ -542,10 +528,58 @@ Your goals:
                     answer = response.text or "I couldn't generate a response this time. Please try asking in a different way."
                 st.markdown(answer)
             st.session_state.revora_chat_history.append({"role": "assistant", "content": answer})
+            st.session_state.revora_last_answer = answer
+            st.session_state.revora_pending_speech = answer
         except KeyError:
             st.error("Gemini API key not configured. Add GEMINI_API_KEY in your Streamlit Cloud app Settings → Secrets, then reboot the app.")
-        except Exception:
-            st.error("REVORA AI couldn't connect to Gemini. Check that your API key is valid, the google-genai package is installed, and your API quota/model access is available.")
+        except Exception as e:
+            st.error("REVORA AI couldn't complete the voice/chat request. Check your Gemini API key, model access, microphone permission, and API quota.")
+            st.caption(f"Technical detail: {e}")
+
+    auto_speak = st.checkbox(
+        "🔊 Automatically speak new AI replies",
+        value=True,
+        key="revora_auto_speak",
+        help="Uses the voice available in your browser. Your browser may require permission or a user interaction before audio plays.",
+    )
+
+    def render_speech_player(text_to_speak, label):
+        import json
+        import streamlit.components.v1 as components
+        safe_text_json = json.dumps(text_to_speak, ensure_ascii=False)
+        components.html(
+            f"""<div style='font-family: sans-serif; color: #174c31;'>{label}</div>
+            <script>
+            const textToSpeak = {safe_text_json};
+            if ('speechSynthesis' in window) {{
+                window.speechSynthesis.cancel();
+                const speakNow = () => {{
+                    const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                    utterance.lang = 'en-IN';
+                    utterance.rate = 1.0;
+                    utterance.pitch = 1.0;
+                    const voices = window.speechSynthesis.getVoices();
+                    const preferred = voices.find(v => v.lang === 'en-IN') || voices.find(v => v.lang.startsWith('en'));
+                    if (preferred) utterance.voice = preferred;
+                    window.speechSynthesis.speak(utterance);
+                }};
+                if (window.speechSynthesis.getVoices().length) speakNow();
+                else window.speechSynthesis.onvoiceschanged = speakNow;
+            }} else {{
+                document.body.innerText = 'Speech playback is not supported by this browser.';
+            }}
+            </script>""",
+            height=35,
+        )
+
+    pending_speech = st.session_state.get("revora_pending_speech")
+    if pending_speech and auto_speak:
+        render_speech_player(pending_speech, "🔊 Speaking REVORA's reply…")
+        st.session_state.pop("revora_pending_speech", None)
+
+    if st.session_state.get("revora_last_answer"):
+        if st.button("▶️ Play latest reply again", key="speak_revora_reply"):
+            render_speech_player(st.session_state.revora_last_answer, "🔊 Playing latest REVORA reply…")
 
     if not st.session_state.revora_chat_history:
         st.markdown("**Try asking:**")
