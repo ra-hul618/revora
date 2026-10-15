@@ -492,7 +492,7 @@ Your goals:
             with st.chat_message("assistant"):
                 with st.spinner("REVORA AI is thinking..."):
                     response = client.models.generate_content(
-                        model="gemini-2.5-flash",
+                        model="gemini-3.5-flash-lite",
                         contents=system_context + "\n\nConversation so far:\n" + transcript,
                     )
                     answer = response.text or "I couldn't generate a response this time. Please try asking in a different way."
