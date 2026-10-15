@@ -6,6 +6,7 @@ import hashlib
 import secrets
 import html
 import io
+import time
 from datetime import datetime, timezone
 
 st.set_page_config(
@@ -452,6 +453,35 @@ with tab_explore:
         st.write("M = materials and sourcing; L = durability and lifespan; P = packaging; U = usage and reuse; E = repairability and end-of-life.")
         st.warning("Values are illustrative demo inputs, not measured carbon footprints or certified environmental claims.")
 
+# Gemini reliability helper: retry temporary overloads, then fail over to a
+# lightweight model so a busy primary model does not immediately break chat.
+def revora_generate_content(client, *, contents):
+    models_to_try = ("gemini-3.8-flash", "gemini-3.5-flash-lite")
+    last_error = None
+    for model_name in models_to_try:
+        for attempt in range(2):
+            try:
+                return client.models.generate_content(model=model_name, contents=contents)
+            except Exception as exc:
+                last_error = exc
+                error_text = str(exc).lower()
+                temporary = any(token in error_text for token in (
+                    "503", "unavailable", "high demand", "429", "resource_exhausted",
+                    "500", "internal", "502", "504", "deadline exceeded", "timed out"
+                ))
+                if not temporary:
+                    # Model-specific 404s should move to the fallback model.
+                    if "404" in error_text or "not_found" in error_text or "not found" in error_text:
+                        break
+                    raise
+                if attempt == 0:
+                    time.sleep(1.2)
+        # If the primary is busy/unavailable, try the fallback model.
+    raise RuntimeError(
+        "Gemini models are temporarily unavailable or overloaded. Please retry in a moment. "
+        f"Last provider error: {last_error}"
+    )
+
 # -------------------- Gemini AI chatbox with voice --------------------
 
 with tab_ai:
@@ -501,8 +531,8 @@ with tab_ai:
             if not prompt and send_voice and audio_prompt is not None:
                 with st.spinner("REVORA is listening and transcribing your question..."):
                     audio_bytes = audio_prompt.getvalue()
-                    transcription_response = client.models.generate_content(
-                        model="gemini-3.8-flash",
+                    transcription_response = revora_generate_content(
+                        client,
                         contents=[
                             types.Part.from_bytes(
                                 data=audio_bytes,
@@ -539,8 +569,8 @@ Your goals:
 """
             with st.chat_message("assistant"):
                 with st.spinner("REVORA AI is thinking..."):
-                    response = client.models.generate_content(
-                        model="gemini-3.8-flash",
+                    response = revora_generate_content(
+                        client,
                         contents=system_context + "\n\nConversation so far:\n" + transcript,
                     )
                     answer = response.text or "I couldn't generate a response this time. Please try asking in a different way."
