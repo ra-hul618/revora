@@ -6,7 +6,7 @@ import hashlib
 import secrets
 import html
 import io
-import time
+import json
 from datetime import datetime, timezone
 
 st.set_page_config(
@@ -20,9 +20,53 @@ BASE_DIR = Path(__file__).parent
 DATA_PATH = BASE_DIR / "products.csv"
 DB_PATH = BASE_DIR / "revora_marketplace.db"
 
+# One-time branded splash screen for the first page load in this browser session.
+if not st.session_state.get("revora_splash_seen", False):
+    st.session_state["revora_splash_seen"] = True
+    st.markdown("""
+    <div class="revora-splash" aria-label="REVORA loading screen">
+      <div class="splash-content">
+        <svg class="revora-mark" viewBox="0 0 120 120" role="img" aria-label="REVORA leaf logo">
+          <defs>
+            <linearGradient id="revoraLeaf" x1="0" y1="1" x2="1" y2="0">
+              <stop offset="0%" stop-color="#a8d977"/>
+              <stop offset="100%" stop-color="#e0f5bd"/>
+            </linearGradient>
+          </defs>
+          <circle cx="60" cy="60" r="55" fill="none" stroke="#477a54" stroke-width="2"/>
+          <path d="M88 26C55 27 30 41 29 65c-1 16 11 27 25 25 24-3 34-31 34-64Z" fill="url(#revoraLeaf)"/>
+          <path d="M28 94C43 73 59 57 82 39" fill="none" stroke="#f5ffe9" stroke-width="4" stroke-linecap="round"/>
+          <path d="M49 70c-1-10-7-17-16-20M61 58c9 1 16 5 20 12" fill="none" stroke="#f5ffe9" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <div class="splash-wordmark">REVORA</div>
+        <div class="splash-tagline">RETHINK · REUSE · REVIVE</div>
+        <div class="splash-loader"><span></span></div>
+        <div class="splash-loading-text">Building a more circular tomorrow…</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
 st.markdown("""
 <style>
     .stApp { background: #f6f8f3; }
+    .revora-splash {
+        position: fixed; inset: 0; z-index: 999999; display: flex;
+        align-items: center; justify-content: center; text-align: center;
+        background: radial-gradient(circle at 50% 35%, #1f573b 0%, #103523 52%, #081c13 100%);
+        color: #f4ffe9; animation: revoraSplashFade 3s ease forwards;
+        pointer-events: none;
+    }
+    .splash-content { display:flex; flex-direction:column; align-items:center; padding:24px; animation: revoraRise .8s ease both; }
+    .revora-mark { width:112px; height:112px; filter: drop-shadow(0 0 22px #80bf7966); animation: revoraPulse 1.5s ease-in-out infinite; }
+    .splash-wordmark { margin-top:18px; font-size:clamp(2.6rem, 7vw, 4.5rem); font-weight:850; letter-spacing:.22em; padding-left:.22em; color:#f4ffe9; }
+    .splash-tagline { margin-top:5px; color:#b9d9b8; font-size:.78rem; letter-spacing:.24em; }
+    .splash-loader { width:180px; height:3px; margin-top:30px; overflow:hidden; background:#ffffff24; border-radius:10px; }
+    .splash-loader span { display:block; width:40%; height:100%; border-radius:10px; background:#b5e58c; animation: revoraLoad 1.2s ease-in-out infinite; }
+    .splash-loading-text { margin-top:13px; color:#c8ddca; font-size:.85rem; }
+    @keyframes revoraSplashFade { 0%,72% { opacity:1; visibility:visible; } 100% { opacity:0; visibility:hidden; } }
+    @keyframes revoraPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.06); } }
+    @keyframes revoraLoad { 0% { transform:translateX(-110%); } 100% { transform:translateX(360%); } }
+    @keyframes revoraRise { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
     [data-testid="stSidebar"] { background: #eaf1e7; }
     .hero {
         padding: 1.6rem 1.8rem; border-radius: 22px;
@@ -51,29 +95,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# -------------------- REVORA animated loading screen --------------------
-# Show once per browser session and fade away automatically.
-if not st.session_state.get("revora_splash_shown", False):
-    st.markdown("""
-    <style>
-      .revora-splash{position:fixed;inset:0;z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;background:radial-gradient(circle at 50% 42%,#245e45 0%,#123b2b 42%,#071d15 100%);color:#fff;text-align:center;animation:revoraSplashFade 4.2s ease-in-out forwards;pointer-events:none;min-height:100vh;opacity:1;visibility:visible}
-      .revora-splash:before,.revora-splash:after{content:"";position:absolute;width:260px;height:260px;border:1px solid rgba(201,244,211,.32);border-radius:50%;box-shadow:0 0 32px rgba(130,232,164,.12),inset 0 0 28px rgba(130,232,164,.08);animation:revoraRing 9s linear infinite}
-      .revora-splash:after{width:350px;height:350px;animation-direction:reverse}
-      .revora-splash-core{position:relative;z-index:2;padding:24px}.revora-splash-logo{font-size:clamp(2.5rem,8vw,4.5rem);font-weight:850;letter-spacing:.12em;margin:0;color:#fff}.revora-splash-leaf{display:inline-block;color:#a7f3bd;margin-right:.12em}.revora-splash-tag{margin-top:10px;font-size:1rem;letter-spacing:.12em;color:#d8f3df}
-      .revora-orbit{position:absolute;z-index:3;font-size:2rem;filter:drop-shadow(0 0 12px rgba(170,255,194,.4))}.revora-orbit.one{animation:revoraFloatOne 3.2s ease-in-out infinite;transform:translate(-125px,-90px)}.revora-orbit.two{animation:revoraFloatTwo 3.8s ease-in-out infinite;transform:translate(130px,-65px)}.revora-orbit.three{animation:revoraFloatThree 3.4s ease-in-out infinite;transform:translate(-105px,95px)}.revora-orbit.four{animation:revoraFloatFour 4s ease-in-out infinite;transform:translate(115px,95px)}
-      .revora-loading-dots{display:flex;justify-content:center;gap:9px;margin-top:30px}.revora-loading-dots span{width:8px;height:8px;border-radius:50%;background:#b5f4c7;animation:revoraDot 1.1s ease-in-out infinite}.revora-loading-dots span:nth-child(2){animation-delay:.15s}.revora-loading-dots span:nth-child(3){animation-delay:.3s}
-      @keyframes revoraSplashFade{0%,82%{opacity:1;visibility:visible}100%{opacity:0;visibility:hidden;pointer-events:none}}@keyframes revoraRing{to{transform:rotate(360deg)}}@keyframes revoraFloatOne{0%,100%{margin-left:0;margin-top:0}50%{margin-left:-12px;margin-top:-15px}}@keyframes revoraFloatTwo{0%,100%{margin-left:0;margin-top:0}50%{margin-left:13px;margin-top:-10px}}@keyframes revoraFloatThree{0%,100%{margin-left:0;margin-top:0}50%{margin-left:-10px;margin-top:12px}}@keyframes revoraFloatFour{0%,100%{margin-left:0;margin-top:0}50%{margin-left:10px;margin-top:13px}}@keyframes revoraDot{0%,80%,100%{opacity:.35;transform:translateY(0)}40%{opacity:1;transform:translateY(-7px)}}
-      @media(prefers-reduced-motion:reduce){.revora-splash,.revora-splash:before,.revora-splash:after,.revora-orbit,.revora-loading-dots span{animation-duration:.01ms!important}}
-    </style>
-    <div class="revora-splash" aria-label="REVORA loading"><span class="revora-orbit one">♻️</span><span class="revora-orbit two">🌿</span><span class="revora-orbit three">📦</span><span class="revora-orbit four">💚</span><div class="revora-splash-core"><h1 class="revora-splash-logo"><span class="revora-splash-leaf">✦</span>REVORA</h1><div class="revora-splash-tag">GIVE ITEMS A SECOND LIFE</div><div class="revora-loading-dots"><span></span><span></span><span></span></div></div></div>
-    """, unsafe_allow_html=True)
-    st.session_state["revora_splash_shown"] = True
-
 # -------------------- Product recommendation engine --------------------
 
-# Built-in, validated fallback keeps the Product Explorer running if products.csv is
-# missing from the deployment or contains malformed CSV quoting. Keep products.csv
-# alongside app.py for easier editing; this embedded copy is a safety net.
 _FALLBACK_PRODUCTS_CSV = 'product_id,product_name,category,material,packaging,description,waste_risk,design_opportunity,tradeoff,material_score,lifecycle_score,packaging_score,usage_score,end_of_life_score\n1,Disposable PET water bottle,Drinkware,PET plastic,Single-use plastic bottle,Convenient single-use water container,Repeated single-use packaging,Refill from safe drinking water or use a durable bottle when used frequently,Reusable alternatives require repeated use and cleaning,35,25,20,25,35\n2,Reusable stainless steel bottle,Drinkware,Stainless steel,Minimal or cardboard packaging,Durable bottle designed for repeated use,Can be underused or lost,Use consistently for many refill cycles,Material-intensive manufacture and cleaning needs matter,65,85,80,90,65\n3,Reusable glass bottle,Drinkware,Glass,Cardboard or protective packaging,Reusable bottle for home or office,Breakage can shorten lifespan,Use in settings where breakage risk is low,Heavier transport and breakage risk,70,70,75,80,70\n4,Single-use shopping bag,Bags,Thin plastic,No additional packaging,Lightweight carrier bag,Often discarded after one trip,Reuse bags already owned before acquiring new ones,Some reusable bags require many uses to offset production,25,20,30,25,25\n5,Reusable fabric tote,Bags,Cotton or blended fabric,Minimal packaging,Reusable shopping bag,May accumulate unused bags,Keep a small set and reuse frequently,Cotton production can be resource intensive,55,75,75,80,60\n6,Recycled-content paper bag,Bags,Recycled paper,Paper bag,Paper carrier with recycled content,May tear when wet or overloaded,Reuse when practical and recycle where accepted,Not always lower impact than reusing a bag already owned,70,45,65,50,75\n7,Disposable coffee cup,Food & drink,Paper with possible lining,Single-use cup,Takeaway cup used for one drink,Repeated cups and lids,Bring a cup or use dine-in service when practical,Reusable cup benefits depend on repeated use and washing,45,20,20,25,35\n8,Reusable coffee cup,Food & drink,Stainless steel or durable plastic,Minimal packaging,Reusable cup for takeaway drinks,May be forgotten or rarely used,Store it where it is easy to remember,Manufacture and washing impacts need repeated use,65,80,75,85,60\n9,Conventional toothbrush,Personal care,Plastic,Cardboard and plastic blister,Low-cost toothbrush with replaceable use cycle,Entire handle is often discarded,Consider replaceable-head options if compatible and durable,Material claims and recycling routes vary,35,45,45,55,30\n10,Replaceable-head toothbrush,Personal care,Reusable handle with replaceable head,Compact packaging,Only the brush head needs regular replacement,Replacement heads still create waste,Use compatible heads and check material disposal,Availability and actual material mix vary,60,75,70,80,55\n11,Disposable cleaning spray bottle,Home cleaning,Plastic bottle and trigger,Plastic bottle plus label,Ready-to-use household cleaner,Packaging and leftover liquid can be wasted,Use measured dispensing and refill options,Refills help only when total packaging is reduced,35,50,25,45,35\n12,Refillable cleaning bottle,Home cleaning,Durable plastic or glass,Refill pouch or concentrate,Reusable container with refill format,Refill packaging may still be significant,Compare packaging per volume and follow dilution instructions,Concentrate transport and refill material matter,55,75,65,80,55\n13,Standard notebook,Stationery,Paper and cardboard,Paper wrap,Bound notebook for writing,Unused pages may be discarded with the notebook,Finish existing notebooks and consider refillable formats,Binding and refill availability vary,65,55,70,65,65\n14,Refillable notebook,Stationery,Reusable cover and replaceable paper,Minimal packaging,Reusable cover with refill pages,Refills still use paper,Replace only the pages needed and use both sides,Extra hardware is only beneficial if reused,60,80,75,85,65\n15,Non-repairable charging cable,Electronics,Plastic and copper,Small cardboard or plastic pack,Cable with fixed connector assembly,Failure near one connector can discard the whole cable,Look for reinforced strain relief and repairable modular parts,Modular products may cost more or be hard to find,40,30,45,70,25\n16,Modular repairable cable concept,Electronics,Replaceable connector modules,Compact recyclable packaging,Concept design allowing a failed connector to be replaced,Design is a proposal and may not be commercially available,Prototype replaceable connectors and document repair instructions,Compatibility and safety testing are essential,60,80,75,85,65\n17,Fast-fashion synthetic shirt,Clothing,Polyester blend,Plastic mailer or tag,Low-cost synthetic garment,Short use cycles and difficult fibre recycling,Buy fewer durable items and extend wear life,Recycled fibres do not remove all shedding or end-of-life issues,35,40,35,45,30\n18,Durable repairable shirt,Clothing,Cotton or durable blend,Minimal packaging,Garment intended for repeated wear and repair,May still be discarded due to fit or style changes,Choose versatile fit and repair small damage,Material impact depends on fibre source and production,55,75,70,85,50\n19,Single-use food container,Food containers,Plastic or coated fibre,Single-use container,Takeaway container for one meal,Frequent packaging waste,Choose reusable containers where washing and return are practical,Food safety and cleaning requirements matter,30,25,20,30,30\n20,Reusable food container,Food containers,Durable glass or stainless steel,Minimal packaging,Container designed for repeated meal storage,Can be lost or left unused,Use regularly and maintain the seal,Heavier manufacture and washing must be considered,65,85,80,90,70\n21,Disposable batteries,Household,Primary battery chemistry,Cardboard and plastic pack,Single-use battery for low-drain devices,Repeated battery purchases and disposal,Use rechargeable batteries for compatible frequent-use devices,Rechargeable batteries are not ideal for every device or use,40,40,50,45,35\n22,Rechargeable battery set,Household,Rechargeable battery chemistry,Cardboard pack,Rechargeable cells for repeated use,May be unsuitable for infrequently used devices,Match charger and battery type to the device,Charging electricity and eventual proper recycling matter,55,80,70,85,55\n23,Plastic-wrapped soap bars,Personal care,Soap and plastic film,Plastic wrap,Bar soap in plastic packaging,Packaging after each purchase,Choose paper-wrapped or unpackaged options when hygiene and availability allow,Paper is not automatically better if coatings or waste are high,55,60,35,70,55\n24,Paper-wrapped soap bar,Personal care,Soap and paper,Paper wrap,Bar soap with paper packaging,Paper packaging still requires resources,Use fully and recycle packaging if locally accepted,"Check inks, coatings, and local recycling acceptance",60,60,75,70,65\n'
 
 @st.cache_data
@@ -101,7 +124,6 @@ def load_data():
             load_notice = f"Loaded product data from `{path.name}`."
             break
         except (pd.errors.ParserError, UnicodeDecodeError, OSError, ValueError):
-            # Try another candidate, then use the known-good embedded copy.
             continue
 
     if df is None:
@@ -326,7 +348,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Tabs preserve the original product explorer and add the marketplace.
 tab_explore, tab_ai, tab_browse, tab_donate, tab_manage, tab_track = st.tabs([
     "🌿 Product Explorer", "🤖 REVORA AI Chat", "🔎 Browse Donations", "🎁 Donate an Item", "📬 Manage Requests", "📦 Track My Request"
 ])
@@ -453,104 +474,189 @@ with tab_explore:
         st.write("M = materials and sourcing; L = durability and lifespan; P = packaging; U = usage and reuse; E = repairability and end-of-life.")
         st.warning("Values are illustrative demo inputs, not measured carbon footprints or certified environmental claims.")
 
-# Gemini reliability helper: retry temporary overloads, then fail over to a
-# lightweight model so a busy primary model does not immediately break chat.
-def revora_generate_content(client, *, contents):
-    models_to_try = ("gemini-3.8-flash", "gemini-3.5-flash-lite")
-    last_error = None
-    for model_name in models_to_try:
-        for attempt in range(2):
-            try:
-                return client.models.generate_content(model=model_name, contents=contents)
-            except Exception as exc:
-                last_error = exc
-                error_text = str(exc).lower()
-                temporary = any(token in error_text for token in (
-                    "503", "unavailable", "high demand", "429", "resource_exhausted",
-                    "500", "internal", "502", "504", "deadline exceeded", "timed out"
-                ))
-                if not temporary:
-                    # Model-specific 404s should move to the fallback model.
-                    if "404" in error_text or "not_found" in error_text or "not found" in error_text:
-                        break
-                    raise
-                if attempt == 0:
-                    time.sleep(1.2)
-        # If the primary is busy/unavailable, try the fallback model.
-    raise RuntimeError(
-        "Gemini models are temporarily unavailable or overloaded. Please retry in a moment. "
-        f"Last provider error: {last_error}"
-    )
+# -------------------- Gemini AI chatbox & Object Scanner --------------------
 
-# -------------------- Gemini AI chatbox with voice --------------------
+def get_gemini_client():
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        api_key = ""
+    if not api_key:
+        raise KeyError("GEMINI_API_KEY is not configured")
+    from google import genai
+    return genai.Client(api_key=api_key)
+
+def generate_with_fallback(client, contents, config=None):
+    """Try the configured model first, falling back safely if unavailable."""
+    for model_name in ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-2.0-flash"]:
+        try:
+            return client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config,
+            )
+        except Exception:
+            continue
+    raise RuntimeError("All configured Gemini models failed to respond.")
 
 with tab_ai:
-    st.markdown("## 🤖 Chat with REVORA AI")
-    st.write("Type or speak about reducing waste, choosing reusable products, repairing items, or using the Donate & Request marketplace.")
-    st.markdown("<div class='marketplace-note'><b>REVORA AI</b> gives practical sustainability guidance. It can make mistakes, so verify important product, recycling, and safety information locally.</div>", unsafe_allow_html=True)
+    st.markdown("## 🤖 REVORA AI: Object Scanner & Sustainability Chat")
+    st.write("Scan any household item to check its condition, see whether you should donate or repair it, or chat with REVORA AI.")
+    st.markdown(
+        "<div class='marketplace-note'><b>REVORA AI</b> gives practical sustainability guidance and visual condition estimates. "
+        "Always inspect physical safety, electrical integrity, and hygiene in person before donating or repairing an item.</div>",
+        unsafe_allow_html=True,
+    )
 
     if "revora_chat_history" not in st.session_state:
         st.session_state.revora_chat_history = []
 
+    # ---- PART 1: AI OBJECT SCANNER ----
+    with st.expander("📸 Scan an Object (Condition, Repair & Donation Analyzer)", expanded=True):
+        scan_mode = st.radio(
+            "Choose input method",
+            ["📤 Upload a photo", "📷 Take a picture"],
+            horizontal=True,
+            key="scan_input_mode",
+        )
+
+        if scan_mode == "📤 Upload a photo":
+            scanned_file = st.file_uploader(
+                "Upload a clear photo of the object",
+                type=["jpg", "jpeg", "png", "webp"],
+                key="object_file_uploader",
+            )
+        else:
+            scanned_file = st.camera_input(
+                "Point your camera at the object",
+                key="object_camera_input",
+            )
+
+        user_scan_note = st.text_input(
+            "Optional context (e.g., 'zipper is stuck', 'bought 2 years ago', 'doesn't turn on')",
+            placeholder="Add any hidden issues the camera cannot see...",
+            key="object_scan_note",
+        )
+
+        if scanned_file is not None:
+            preview_col, result_col = st.columns([1, 1.8])
+            with preview_col:
+                st.image(scanned_file, caption="Scanned Object", use_container_width=True)
+                analyze_btn = st.button("🔍 Analyze Object Condition", type="primary", use_container_width=True)
+
+            if analyze_btn:
+                try:
+                    client = get_gemini_client()
+                    from google.genai import types
+
+                    img_bytes = scanned_file.getvalue()
+                    mime_type = scanned_file.type or "image/jpeg"
+                    image_part = types.Part.from_bytes(data=img_bytes, mime_type=mime_type)
+
+                    scan_prompt = f"""You are REVORA's visual sustainability and circular-economy inspector.
+Analyze the object in this image and return a strict JSON object with these exact keys:
+- "object_name": Short, clear name of the item (string).
+- "marketplace_category": Must be one of ["Clothing & shoes", "Books & education", "Electronics", "Home & kitchen", "Toys & games", "Sports & outdoors", "Other"].
+- "condition_status": Must be one of ["Usable", "Needs Minor Repair", "Bad Condition"].
+- "marketplace_condition": Must be one of ["Like new", "Good", "Used but working", "Needs minor repair"].
+- "condition_score": Integer from 0 to 100 estimating physical usability.
+- "object_explanation": 2-3 sentences explaining what the object is, its likely material composition, and visible condition details (wear, scratches, tears, rust, or cleanliness).
+- "recommended_action": Must be one of ["Donate on REVORA", "Repair & Reuse", "Upcycle / Recycle Safely"].
+- "action_advice": Practical step-by-step advice explaining why you recommend donating, repairing, or recycling it, and how the user can do it safely.
+- "draft_listing_description": A polite, honest 2-sentence description the user can use if listing this item on the REVORA Donate marketplace.
+
+User's additional note about the item: "{user_scan_note.strip() or 'None provided'}"
+"""
+                    with result_col:
+                        with st.spinner("Scanning object materials, wear patterns, and reuse potential..."):
+                            response = generate_with_fallback(
+                                client,
+                                contents=[image_part, scan_prompt],
+                                config=types.GenerateContentConfig(
+                                    response_mime_type="application/json",
+                                    temperature=0.2,
+                                ),
+                            )
+                            st.session_state.last_scan_result = json.loads(response.text)
+
+                            res = st.session_state.last_scan_result
+                            chat_summary = (
+                                f"**[Scanned Object: {res.get('object_name', 'Item')}]**\n"
+                                f"- **Condition:** {res.get('condition_status')} ({res.get('condition_score')}/100)\n"
+                                f"- **Verdict:** {res.get('recommended_action')}\n"
+                                f"- **Analysis:** {res.get('object_explanation')}\n"
+                                f"- **Next Steps:** {res.get('action_advice')}"
+                            )
+                            st.session_state.revora_chat_history.append(
+                                {"role": "assistant", "content": chat_summary}
+                            )
+                except KeyError:
+                    st.error("Gemini API key not configured. Add GEMINI_API_KEY in your Streamlit Cloud Settings → Secrets.")
+                except Exception as e:
+                    st.error(f"Could not analyze the image. Please try another photo or check your API key. ({e})")
+
+            if "last_scan_result" in st.session_state:
+                res = st.session_state.last_scan_result
+                status = res.get("condition_status", "Usable")
+                score = int(res.get("condition_score", 50))
+
+                if status == "Usable":
+                    badge_color = "#1b6741"
+                    badge_bg = "#dcecdf"
+                elif status == "Needs Minor Repair":
+                    badge_color = "#855800"
+                    badge_bg = "#fff1cc"
+                else:
+                    badge_color = "#8c1d1d"
+                    badge_bg = "#fadddd"
+
+                with result_col:
+                    st.markdown(f"""
+                    <div class="result-card">
+                        <span style="display:inline-block;padding:.3rem .75rem;border-radius:999px;background:{badge_bg};color:{badge_color};font-weight:700;font-size:.85rem;">
+                            {safe_text(status)} · {score}/100 Condition Score
+                        </span>
+                        <h3 style="margin:.5rem 0 .25rem">{safe_text(res.get('object_name', 'Scanned Object'))}</h3>
+                        <div class="muted">Suggested Category: {safe_text(res.get('marketplace_category', 'Other'))}</div>
+                        <hr style="margin:.7rem 0;border:none;border-top:1px solid #d9e5d7;">
+                        <p><b>🔎 About & Condition Details:</b><br>{safe_text(res.get('object_explanation', ''))}</p>
+                        <p><b>🌱 Recommendation ({safe_text(res.get('recommended_action', ''))}):</b><br>{safe_text(res.get('action_advice', ''))}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    if status in ["Usable", "Needs Minor Repair"]:
+                        if st.button("🎁 Pre-fill 'Donate an Item' Form with this Scan", key="prefill_donate_btn", use_container_width=True):
+                            st.session_state.prefill_item_name = res.get("object_name", "")
+                            st.session_state.prefill_category = res.get("marketplace_category", "Other")
+                            st.session_state.prefill_condition = res.get("marketplace_condition", "Good")
+                            st.session_state.prefill_description = res.get("draft_listing_description", "")
+                            st.success("Details copied! Open the '🎁 Donate an Item' tab above to review and publish your listing.")
+
+    st.markdown("---")
+    st.markdown("### 💬 Ask REVORA AI a Follow-Up Question")
+
+    # ---- PART 2: TEXT CHATBOX ----
     chat_col, clear_col = st.columns([5, 1])
     with chat_col:
-        st.caption("Powered by Google's Gemini API · Voice input and spoken replies")
+        st.caption("Powered by Google's Gemini API · Ask follow-up repair, recycling, or reuse questions below.")
     with clear_col:
         if st.button("Clear chat", key="clear_revora_chat"):
             st.session_state.revora_chat_history = []
-            st.session_state.pop("revora_last_answer", None)
+            st.session_state.pop("last_scan_result", None)
             st.rerun()
 
     for message in st.session_state.revora_chat_history:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    st.markdown("#### 🎙️ Ask by voice")
-    st.caption("Record your question, then press **Send voice question**. Your browser may ask for microphone permission.")
-    audio_prompt = st.audio_input("Record your question", key="revora_audio_input")
-    voice_col, text_col = st.columns([1, 2])
-    with voice_col:
-        send_voice = st.button("🎙️ Send voice question", key="send_revora_voice", use_container_width=True)
-    with text_col:
-        st.caption("You can also type below. Spoken answers use your browser's built-in voice and may depend on available voices.")
-    prompt = st.chat_input("Or type your question about sustainability...", key="revora_chat_input")
+    prompt = st.chat_input("Ask REVORA anything about repairing, donating, or sustainability...", key="revora_chat_input")
+    if prompt:
+        st.session_state.revora_chat_history.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-    if prompt or (send_voice and audio_prompt is not None):
         try:
-            try:
-                api_key = st.secrets["GEMINI_API_KEY"]
-            except Exception:
-                api_key = ""
-            if not api_key:
-                raise KeyError("GEMINI_API_KEY is not configured")
-
-            from google import genai
-            from google.genai import types
-            client = genai.Client(api_key=api_key)
-
-            if not prompt and send_voice and audio_prompt is not None:
-                with st.spinner("REVORA is listening and transcribing your question..."):
-                    audio_bytes = audio_prompt.getvalue()
-                    transcription_response = revora_generate_content(
-                        client,
-                        contents=[
-                            types.Part.from_bytes(
-                                data=audio_bytes,
-                                mime_type=audio_prompt.type or "audio/wav",
-                            ),
-                            "Transcribe the spoken question exactly as clearly as possible. Return only the transcription, without commentary.",
-                        ],
-                    )
-                    prompt = (transcription_response.text or "").strip()
-                if not prompt:
-                    st.warning("I couldn't understand that recording. Please try again or type your question.")
-                    st.stop()
-                st.caption("Voice transcription: " + prompt)
-
-            st.session_state.revora_chat_history.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
+            client = get_gemini_client()
             recent_history = st.session_state.revora_chat_history[-12:]
             transcript = "\n\n".join(
                 ("User" if m["role"] == "user" else "REVORA AI") + ": " + m["content"]
@@ -560,78 +666,29 @@ with tab_ai:
 
 Your goals:
 - Give practical, affordable ways to reduce waste, reuse, repair, share, and donate usable items.
+- If the user recently scanned an object in the conversation, help them with specific DIY repair tips, cleaning advice, or how to donate/recycle it safely.
 - Explain trade-offs honestly; do not invent exact carbon, water, money, or landfill savings.
-- Do not claim a product is certified or a local item is available unless verified in the app.
 - Encourage users to use REVORA's Donate & Request tabs when they want to pass on or request usable items.
 - For recycling questions, explain that local rules differ and suggest checking the local authority.
-- Keep answers friendly, clear, and reasonably concise, suitable for being read aloud.
-- Do not ask users to share passwords, API keys, or sensitive personal information.
+- Keep answers friendly, clear, and reasonably concise.
 """
             with st.chat_message("assistant"):
                 with st.spinner("REVORA AI is thinking..."):
-                    response = revora_generate_content(
+                    response = generate_with_fallback(
                         client,
                         contents=system_context + "\n\nConversation so far:\n" + transcript,
                     )
                     answer = response.text or "I couldn't generate a response this time. Please try asking in a different way."
                 st.markdown(answer)
             st.session_state.revora_chat_history.append({"role": "assistant", "content": answer})
-            st.session_state.revora_last_answer = answer
-            st.session_state.revora_pending_speech = answer
         except KeyError:
             st.error("Gemini API key not configured. Add GEMINI_API_KEY in your Streamlit Cloud app Settings → Secrets, then reboot the app.")
-        except Exception as e:
-            st.error("REVORA AI couldn't complete the voice/chat request. Check your Gemini API key, model access, microphone permission, and API quota.")
-            st.caption(f"Technical detail: {e}")
-
-    auto_speak = st.checkbox(
-        "🔊 Automatically speak new AI replies",
-        value=True,
-        key="revora_auto_speak",
-        help="Uses the voice available in your browser. Your browser may require permission or a user interaction before audio plays.",
-    )
-
-    def render_speech_player(text_to_speak, label):
-        import json
-        import streamlit.components.v1 as components
-        safe_text_json = json.dumps(text_to_speak, ensure_ascii=False)
-        components.html(
-            f"""<div style='font-family: sans-serif; color: #174c31;'>{label}</div>
-            <script>
-            const textToSpeak = {safe_text_json};
-            if ('speechSynthesis' in window) {{
-                window.speechSynthesis.cancel();
-                const speakNow = () => {{
-                    const utterance = new SpeechSynthesisUtterance(textToSpeak);
-                    utterance.lang = 'en-IN';
-                    utterance.rate = 1.0;
-                    utterance.pitch = 1.0;
-                    const voices = window.speechSynthesis.getVoices();
-                    const preferred = voices.find(v => v.lang === 'en-IN') || voices.find(v => v.lang.startsWith('en'));
-                    if (preferred) utterance.voice = preferred;
-                    window.speechSynthesis.speak(utterance);
-                }};
-                if (window.speechSynthesis.getVoices().length) speakNow();
-                else window.speechSynthesis.onvoiceschanged = speakNow;
-            }} else {{
-                document.body.innerText = 'Speech playback is not supported by this browser.';
-            }}
-            </script>""",
-            height=35,
-        )
-
-    pending_speech = st.session_state.get("revora_pending_speech")
-    if pending_speech and auto_speak:
-        render_speech_player(pending_speech, "🔊 Speaking REVORA's reply…")
-        st.session_state.pop("revora_pending_speech", None)
-
-    if st.session_state.get("revora_last_answer"):
-        if st.button("▶️ Play latest reply again", key="speak_revora_reply"):
-            render_speech_player(st.session_state.revora_last_answer, "🔊 Playing latest REVORA reply…")
+        except Exception:
+            st.error("REVORA AI couldn't connect to Gemini. Check that your API key is valid, the google-genai package is installed, and your API quota/model access is available.")
 
     if not st.session_state.revora_chat_history:
-        st.markdown("**Try asking:**")
-        st.caption("How can I reduce plastic waste at home? · Should I repair or replace a product? · What items are good to donate?")
+        st.markdown("**Try scanning an item above, or ask:**")
+        st.caption("How can I fix a loose chair leg? · Should I repair or replace a torn backpack? · What items are good to donate?")
 
 # -------------------- Browse available items and submit requests --------------------
 
@@ -702,16 +759,26 @@ with tab_donate:
     with st.form("donate_item_form", clear_on_submit=True):
         d1, d2 = st.columns(2)
         with d1:
-            item_name = st.text_input("Item name *", placeholder="e.g. First-year engineering textbooks", max_chars=100)
-            item_category = st.selectbox("Category *", ["Clothing & shoes", "Books & education", "Electronics", "Home & kitchen", "Toys & games", "Sports & outdoors", "Other"])
-            item_condition = st.selectbox("Condition *", ["Like new", "Good", "Used but working", "Needs minor repair"])
+            cat_options = ["Clothing & shoes", "Books & education", "Electronics", "Home & kitchen", "Toys & games", "Sports & outdoors", "Other"]
+            cond_options = ["Like new", "Good", "Used but working", "Needs minor repair"]
+            default_cat = st.session_state.get("prefill_category", "Clothing & shoes")
+            default_cond = st.session_state.get("prefill_condition", "Good")
+
+            item_name = st.text_input("Item name *", value=st.session_state.get("prefill_item_name", ""), placeholder="e.g. First-year engineering textbooks", max_chars=100)
+            item_category = st.selectbox("Category *", cat_options, index=cat_options.index(default_cat) if default_cat in cat_options else 0)
+            item_condition = st.selectbox("Condition *", cond_options, index=cond_options.index(default_cond) if default_cond in cond_options else 1)
             item_location = st.text_input("Area / city *", placeholder="e.g. Kasturi Nagar, Bengaluru", max_chars=120)
         with d2:
             donor_name = st.text_input("Your display name *", placeholder="First name or nickname", max_chars=80)
             donor_contact = st.text_input("Your email or phone *", placeholder="Used to contact you after approval", max_chars=120)
             contact_type = st.selectbox("Contact preference", ["Email", "Phone / WhatsApp", "Either"])
             listing_pin = st.text_input("Create a private 6+ character listing PIN *", type="password", max_chars=64)
-        item_description = st.text_area("Description *", placeholder="Mention size, model, included accessories, defects, pickup conditions, etc.", max_chars=1000)
+        item_description = st.text_area(
+            "Description *",
+            value=st.session_state.get("prefill_description", ""),
+            placeholder="Mention size, model, included accessories, defects, pickup conditions, etc.",
+            max_chars=1000,
+        )
         safety_confirm = st.checkbox("I confirm this item is legal, safe to give away, and described honestly.")
         submit_donation = st.form_submit_button("Publish donation listing", use_container_width=True)
     if submit_donation:
@@ -731,6 +798,8 @@ with tab_donate:
                      donor_name.strip(), donor_contact.strip(), contact_type, hash_pin(listing_pin), now_iso())
                 )
                 new_id = cursor.lastrowid
+            for k in ["prefill_item_name", "prefill_category", "prefill_condition", "prefill_description"]:
+                st.session_state.pop(k, None)
             st.success(f"Your donation is listed! Your listing ID is **REV-{new_id:05d}**. Save this ID and your private PIN to manage requests.")
             st.info("Your contact details are not displayed publicly. They are revealed to a requester only after you approve their request.")
             st.code(f"Listing ID: REV-{new_id:05d}", language=None)
@@ -766,7 +835,6 @@ with tab_manage:
     if st.session_state.get("managed_listing_id"):
         listing = get_item(st.session_state.managed_listing_id)
         if listing:
-            # Require re-entry of the PIN each time a new listing is loaded; after a successful check, session is trusted.
             st.markdown(f"### {safe_text(listing['item_name'])}")
             st.caption(f"REV-{listing['id']:05d} · {safe_text(listing['status'])} · {safe_text(listing['location'])}")
             st.write(safe_text(listing["description"]))
