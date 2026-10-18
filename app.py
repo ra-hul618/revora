@@ -8,6 +8,7 @@ import secrets
 import html
 import io
 import json
+import math
 from datetime import datetime, timezone
 
 st.set_page_config(
@@ -20,6 +21,25 @@ st.set_page_config(
 BASE_DIR = Path(__file__).parent
 DATA_PATH = BASE_DIR / "products.csv"
 DB_PATH = BASE_DIR / "revora_marketplace.db"
+
+CATEGORY_ICONS = {
+    "Drinkware": "🚰",
+    "Bags": "🛍️",
+    "Food & drink": "☕",
+    "Personal care": "🪥",
+    "Home cleaning": "🧼",
+    "Stationery": "📓",
+    "Electronics": "🔌",
+    "Clothing": "👕",
+    "Food containers": "🍱",
+    "Household": "🔋",
+    "Clothing & shoes": "👟",
+    "Books & education": "📚",
+    "Home & kitchen": "🏡",
+    "Toys & games": "🎲",
+    "Sports & outdoors": "⚽",
+    "Other": "✨",
+}
 
 # One-time branded splash screen for the first page load in this browser session.
 if not st.session_state.get("revora_splash_seen", False):
@@ -47,62 +67,259 @@ if not st.session_state.get("revora_splash_seen", False):
     </div>
     """, unsafe_allow_html=True)
 
-st.markdown("""
+# -------------------- Sidebar with Theme Toggle & Weight Customizer --------------------
+
+DEFAULT_WEIGHTS = {
+    "material_score": 0.25,
+    "lifecycle_score": 0.25,
+    "packaging_score": 0.15,
+    "usage_score": 0.20,
+    "end_of_life_score": 0.15,
+}
+DISPLAY_NAMES = {
+    "material_score": "Materials & sourcing",
+    "lifecycle_score": "Durability & lifespan",
+    "packaging_score": "Packaging",
+    "usage_score": "Usage & reuse",
+    "end_of_life_score": "Repair & end-of-life",
+}
+
+with st.sidebar:
+    st.markdown("## 🌱 REVORA")
+    st.caption("Waste-to-Design & Circular Reuse")
+    dark_mode = st.toggle("🌙 Midnight Forest Dark Mode", value=False, key="revora_dark_mode")
+    st.markdown("---")
+    st.markdown("**✨ What You Can Do Here**")
+    st.write("🌿 **Explore** 24+ product lifecycles")
+    st.write("🕸️ **Compare** products on Radar Charts")
+    st.write("📸 **Scan** item condition with AI")
+    st.write("🎙️ **Ask** via Voice Search & Read Aloud")
+    st.write("🤝 **Donate & Request** community items")
+
+    st.markdown("---")
+    with st.expander("🎛️ Customize EcoScore Weights", expanded=False):
+        st.caption("Adjust sliders to personalize how REVORA calculates EcoScores:")
+        w_m = st.slider("Materials & sourcing", 0, 100, 25, 5, key="w_m")
+        w_l = st.slider("Durability & lifespan", 0, 100, 25, 5, key="w_l")
+        w_p = st.slider("Packaging impact", 0, 100, 15, 5, key="w_p")
+        w_u = st.slider("Usage & reuse", 0, 100, 20, 5, key="w_u")
+        w_e = st.slider("Repair & end-of-life", 0, 100, 15, 5, key="w_e")
+        total_w = max(1, w_m + w_l + w_p + w_u + w_e)
+        WEIGHTS = {
+            "material_score": w_m / total_w,
+            "lifecycle_score": w_l / total_w,
+            "packaging_score": w_p / total_w,
+            "usage_score": w_u / total_w,
+            "end_of_life_score": w_e / total_w,
+        }
+    if "WEIGHTS" not in locals():
+        WEIGHTS = DEFAULT_WEIGHTS.copy()
+
+    st.markdown("---")
+    st.caption("Demo EcoScores are heuristic estimates, not verified lifecycle assessments.")
+    st.caption("Arrange handovers in safe, public places.")
+
+# -------------------- Dynamic Theme CSS (Botanical Light & Midnight Forest Dark) --------------------
+
+if dark_mode:
+    theme_vars = """
+        --bg-main: #0b1911;
+        --bg-sidebar: linear-gradient(180deg, #0f2419 0%, #091710 100%);
+        --card-bg: rgba(20, 43, 30, 0.88);
+        --card-border: rgba(110, 190, 135, 0.22);
+        --text-main: #ecfdf3;
+        --text-body: #cce3d4;
+        --text-muted: #93b5a0;
+        --score-color: #7ee094;
+        --pill-bg: linear-gradient(135deg, #1b4d31 0%, #256642 100%);
+        --pill-text: #d9fbe5;
+        --tab-bar-bg: rgba(16, 36, 25, 0.85);
+        --tab-text: #b7d9c4;
+        --track-bg: #1e3a2a;
+        --note-bg: rgba(18, 40, 28, 0.92);
+    """
+else:
+    theme_vars = """
+        --bg-main: #f4f8f4;
+        --bg-sidebar: linear-gradient(180deg, #e7f1e6 0%, #dbeadd 100%);
+        --card-bg: rgba(255, 255, 255, 0.92);
+        --card-border: rgba(27, 103, 65, 0.15);
+        --text-main: #102a1d;
+        --text-body: #2c4235;
+        --text-muted: #5b6d61;
+        --score-color: #1b6741;
+        --pill-bg: linear-gradient(135deg, #dcecdf 0%, #c8e4ce 100%);
+        --pill-text: #13462b;
+        --tab-bar-bg: rgba(255, 255, 255, 0.82);
+        --tab-text: #264c38;
+        --track-bg: #e6efe6;
+        --note-bg: rgba(255, 255, 255, 0.92);
+    """
+
+st.markdown(f"""
 <style>
-    .stApp { background: #f6f8f3; }
-    .revora-splash {
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
+    :root {{
+        {theme_vars}
+    }}
+
+    html, body, [class*="css"] {{
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        color: var(--text-main);
+    }}
+    h1, h2, h3, h4, .splash-wordmark {{
+        font-family: 'Outfit', sans-serif !important;
+        color: var(--text-main);
+    }}
+    p, li, label, .stMarkdown {{
+        color: var(--text-body);
+    }}
+
+    .stApp {{
+        background-color: var(--bg-main);
+        background-image:
+            radial-gradient(at 12% 10%, rgba(168, 217, 119, 0.16) 0px, transparent 48%),
+            radial-gradient(at 88% 15%, rgba(35, 102, 71, 0.14) 0px, transparent 50%),
+            radial-gradient(at 50% 90%, rgba(181, 229, 140, 0.14) 0px, transparent 55%);
+    }}
+
+    .revora-splash {{
         position: fixed; inset: 0; z-index: 999999; display: flex;
         align-items: center; justify-content: center; text-align: center;
         background: radial-gradient(circle at 50% 35%, #1f573b 0%, #103523 52%, #081c13 100%);
-        color: #f4ffe9; animation: revoraSplashFade 3s ease forwards;
+        color: #f4ffe9; animation: revoraSplashFade 2.8s ease forwards;
         pointer-events: none;
-    }
-    .splash-content { display:flex; flex-direction:column; align-items:center; padding:24px; animation: revoraRise .8s ease both; }
-    .revora-mark { width:112px; height:112px; filter: drop-shadow(0 0 22px #80bf7966); animation: revoraPulse 1.5s ease-in-out infinite; }
-    .splash-wordmark { margin-top:18px; font-size:clamp(2.6rem, 7vw, 4.5rem); font-weight:850; letter-spacing:.22em; padding-left:.22em; color:#f4ffe9; }
-    .splash-tagline { margin-top:5px; color:#b9d9b8; font-size:.78rem; letter-spacing:.24em; }
-    .splash-loader { width:180px; height:3px; margin-top:30px; overflow:hidden; background:#ffffff24; border-radius:10px; }
-    .splash-loader span { display:block; width:40%; height:100%; border-radius:10px; background:#b5e58c; animation: revoraLoad 1.2s ease-in-out infinite; }
-    .splash-loading-text { margin-top:13px; color:#c8ddca; font-size:.85rem; }
-    @keyframes revoraSplashFade { 0%,72% { opacity:1; visibility:visible; } 100% { opacity:0; visibility:hidden; } }
-    @keyframes revoraPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.06); } }
-    @keyframes revoraLoad { 0% { transform:translateX(-110%); } 100% { transform:translateX(360%); } }
-    @keyframes revoraRise { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
-    [data-testid="stSidebar"] { background: #eaf1e7; }
-    .hero {
-        padding: 1.6rem 1.8rem; border-radius: 22px;
-        background: linear-gradient(120deg, #123b2b 0%, #236647 70%, #3f8058 100%);
-        color: white; margin-bottom: 1.1rem;
-    }
-    .hero h1 { color: white; font-size: 3rem; margin: 0; letter-spacing: -1px; }
-    .hero p { color: #e3f3e7; font-size: 1.08rem; margin: .35rem 0 0; }
-    .pill {
-        display:inline-block; padding:.28rem .65rem; border-radius:999px;
-        background:#dcecdf; color:#174c31; font-size:.82rem; font-weight:600;
-    }
-    .result-card {
-        border: 1px solid #d9e5d7; border-radius: 16px; padding: 1rem 1.1rem;
-        background: white; height: 100%;
-    }
-    .muted { color: #627268; font-size: .9rem; }
-    .big-score { font-size: 2rem; font-weight: 800; color: #1b6741; }
-    div[data-testid="stMetric"] {
-        background: white; border: 1px solid #dce7da; padding: 12px 16px; border-radius: 14px;
-    }
-    .marketplace-note {
-        border: 1px solid #d9e5d7; border-radius: 14px; padding: 1rem;
-        background: #fff; margin: .5rem 0 1rem;
-    }
+    }}
+    .splash-content {{ display:flex; flex-direction:column; align-items:center; padding:24px; animation: revoraRise .8s ease both; }}
+    .revora-mark {{ width:112px; height:112px; filter: drop-shadow(0 0 22px #80bf7966); animation: revoraPulse 1.5s ease-in-out infinite; }}
+    .splash-wordmark {{ margin-top:18px; font-size:clamp(2.6rem, 7vw, 4.5rem); font-weight:800; letter-spacing:.22em; padding-left:.22em; color:#f4ffe9 !important; }}
+    .splash-tagline {{ margin-top:5px; color:#b9d9b8; font-size:.78rem; letter-spacing:.24em; }}
+    .splash-loader {{ width:180px; height:3px; margin-top:30px; overflow:hidden; background:#ffffff24; border-radius:10px; }}
+    .splash-loader span {{ display:block; width:40%; height:100%; border-radius:10px; background:#b5e58c; animation: revoraLoad 1.2s ease-in-out infinite; }}
+    .splash-loading-text {{ margin-top:13px; color:#c8ddca; font-size:.85rem; }}
+    @keyframes revoraSplashFade {{ 0%,72% {{ opacity:1; visibility:visible; }} 100% {{ opacity:0; visibility:hidden; }} }}
+    @keyframes revoraPulse {{ 0%,100% {{ transform:scale(1); }} 50% {{ transform:scale(1.06); }} }}
+    @keyframes revoraLoad {{ 0% {{ transform:translateX(-110%); }} 100% {{ transform:translateX(360%); }} }}
+    @keyframes revoraRise {{ from {{ opacity:0; transform:translateY(12px); }} to {{ opacity:1; transform:translateY(0); }} }}
+
+    [data-testid="stSidebar"] {{
+        background: var(--bg-sidebar);
+        border-right: 1px solid var(--card-border);
+    }}
+
+    .hero {{
+        position: relative;
+        overflow: hidden;
+        padding: 2.2rem 2.4rem;
+        border-radius: 26px;
+        background: linear-gradient(125deg, #0d2e20 0%, #1b563b 48%, #2e7a53 100%);
+        color: white;
+        margin-bottom: 1.4rem;
+        box-shadow: 0 20px 42px -15px rgba(18, 59, 43, 0.38);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+    }}
+    .hero h1 {{
+        color: white !important;
+        font-size: clamp(2.4rem, 4.5vw, 3.4rem);
+        font-weight: 800;
+        margin: 0.25rem 0 0;
+        letter-spacing: -1px;
+    }}
+    .hero p {{ color: #e3f3e7 !important; font-size: 1.08rem; margin: .35rem 0 0; max-width: 720px; }}
+    .hero-badges {{ display: flex; flex-wrap: wrap; gap: 10px; margin-top: 1.15rem; }}
+    .hero-badge {{
+        background: rgba(255, 255, 255, 0.12);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        color: #f4ffe9;
+        padding: 0.38rem 0.85rem;
+        border-radius: 999px;
+        font-size: 0.82rem;
+        font-weight: 600;
+    }}
+
+    .pill {{
+        display: inline-block;
+        padding: .3rem .75rem;
+        border-radius: 999px;
+        background: var(--pill-bg);
+        color: var(--pill-text);
+        font-size: .8rem;
+        font-weight: 700;
+    }}
+
+    .result-card {{
+        border: 1px solid var(--card-border);
+        border-radius: 20px;
+        padding: 1.3rem 1.35rem;
+        background: var(--card-bg);
+        backdrop-filter: blur(10px);
+        height: 100%;
+        margin-bottom: 0.65rem;
+        box-shadow: 0 8px 22px -8px rgba(0, 0, 0, 0.12);
+        transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.24s ease, border-color 0.24s ease;
+    }}
+    .result-card:hover {{
+        transform: translateY(-5px);
+        box-shadow: 0 18px 34px -10px rgba(27, 103, 65, 0.25);
+        border-color: #4f9369;
+    }}
+    .muted {{ color: var(--text-muted) !important; font-size: .88rem; font-weight: 500; }}
+    .big-score {{ font-size: 2.1rem; font-weight: 800; color: var(--score-color); font-family: 'Outfit', sans-serif; }}
+
+    .eco-bar-track {{
+        width: 100%; height: 7px; background: var(--track-bg); border-radius: 999px;
+        overflow: hidden; margin: 8px 0 12px;
+    }}
+    .eco-bar-fill {{ height: 100%; border-radius: 999px; transition: width 0.4s ease; }}
+
+    div[data-baseweb="tab-list"] {{
+        gap: 8px;
+        background: var(--tab-bar-bg);
+        backdrop-filter: blur(10px);
+        padding: 8px 10px;
+        border-radius: 18px;
+        border: 1px solid var(--card-border);
+        margin-bottom: 1rem;
+    }}
+    button[data-baseweb="tab"] {{
+        border-radius: 12px !important;
+        padding: 9px 16px !important;
+        font-weight: 600 !important;
+        color: var(--tab-text) !important;
+    }}
+    button[data-baseweb="tab"][aria-selected="true"] {{
+        background: linear-gradient(135deg, #1b6741 0%, #2d8659 100%) !important;
+        color: #ffffff !important;
+        box-shadow: 0 4px 12px rgba(27, 103, 65, 0.28) !important;
+    }}
+    div[data-baseweb="tab-highlight"] {{ display: none !important; }}
+
+    div[data-testid="stMetric"] {{
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        padding: 14px 18px;
+        border-radius: 18px;
+    }}
+
+    .marketplace-note {{
+        border: 1px solid var(--card-border);
+        border-left: 5px solid #2e8b57;
+        border-radius: 16px;
+        padding: 1rem 1.2rem;
+        background: var(--note-bg);
+        margin: .5rem 0 1.1rem;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
-# -------------------- Product recommendation engine --------------------
+# -------------------- Product recommendation engine & SVG Radar Chart --------------------
 
 _FALLBACK_PRODUCTS_CSV = 'product_id,product_name,category,material,packaging,description,waste_risk,design_opportunity,tradeoff,material_score,lifecycle_score,packaging_score,usage_score,end_of_life_score\n1,Disposable PET water bottle,Drinkware,PET plastic,Single-use plastic bottle,Convenient single-use water container,Repeated single-use packaging,Refill from safe drinking water or use a durable bottle when used frequently,Reusable alternatives require repeated use and cleaning,35,25,20,25,35\n2,Reusable stainless steel bottle,Drinkware,Stainless steel,Minimal or cardboard packaging,Durable bottle designed for repeated use,Can be underused or lost,Use consistently for many refill cycles,Material-intensive manufacture and cleaning needs matter,65,85,80,90,65\n3,Reusable glass bottle,Drinkware,Glass,Cardboard or protective packaging,Reusable bottle for home or office,Breakage can shorten lifespan,Use in settings where breakage risk is low,Heavier transport and breakage risk,70,70,75,80,70\n4,Single-use shopping bag,Bags,Thin plastic,No additional packaging,Lightweight carrier bag,Often discarded after one trip,Reuse bags already owned before acquiring new ones,Some reusable bags require many uses to offset production,25,20,30,25,25\n5,Reusable fabric tote,Bags,Cotton or blended fabric,Minimal packaging,Reusable shopping bag,May accumulate unused bags,Keep a small set and reuse frequently,Cotton production can be resource intensive,55,75,75,80,60\n6,Recycled-content paper bag,Bags,Recycled paper,Paper bag,Paper carrier with recycled content,May tear when wet or overloaded,Reuse when practical and recycle where accepted,Not always lower impact than reusing a bag already owned,70,45,65,50,75\n7,Disposable coffee cup,Food & drink,Paper with possible lining,Single-use cup,Takeaway cup used for one drink,Repeated cups and lids,Bring a cup or use dine-in service when practical,Reusable cup benefits depend on repeated use and washing,45,20,20,25,35\n8,Reusable coffee cup,Food & drink,Stainless steel or durable plastic,Minimal packaging,Reusable cup for takeaway drinks,May be forgotten or rarely used,Store it where it is easy to remember,Manufacture and washing impacts need repeated use,65,80,75,85,60\n9,Conventional toothbrush,Personal care,Plastic,Cardboard and plastic blister,Low-cost toothbrush with replaceable use cycle,Entire handle is often discarded,Consider replaceable-head options if compatible and durable,Material claims and recycling routes vary,35,45,45,55,30\n10,Replaceable-head toothbrush,Personal care,Reusable handle with replaceable head,Compact packaging,Only the brush head needs regular replacement,Replacement heads still create waste,Use compatible heads and check material disposal,Availability and actual material mix vary,60,75,70,80,55\n11,Disposable cleaning spray bottle,Home cleaning,Plastic bottle and trigger,Plastic bottle plus label,Ready-to-use household cleaner,Packaging and leftover liquid can be wasted,Use measured dispensing and refill options,Refills help only when total packaging is reduced,35,50,25,45,35\n12,Refillable cleaning bottle,Home cleaning,Durable plastic or glass,Refill pouch or concentrate,Reusable container with refill format,Refill packaging may still be significant,Compare packaging per volume and follow dilution instructions,Concentrate transport and refill material matter,55,75,65,80,55\n13,Standard notebook,Stationery,Paper and cardboard,Paper wrap,Bound notebook for writing,Unused pages may be discarded with the notebook,Finish existing notebooks and consider refillable formats,Binding and refill availability vary,65,55,70,65,65\n14,Refillable notebook,Stationery,Reusable cover and replaceable paper,Minimal packaging,Reusable cover with refill pages,Refills still use paper,Replace only the pages needed and use both sides,Extra hardware is only beneficial if reused,60,80,75,85,65\n15,Non-repairable charging cable,Electronics,Plastic and copper,Small cardboard or plastic pack,Cable with fixed connector assembly,Failure near one connector can discard the whole cable,Look for reinforced strain relief and repairable modular parts,Modular products may cost more or be hard to find,40,30,45,70,25\n16,Modular repairable cable concept,Electronics,Replaceable connector modules,Compact recyclable packaging,Concept design allowing a failed connector to be replaced,Design is a proposal and may not be commercially available,Prototype replaceable connectors and document repair instructions,Compatibility and safety testing are essential,60,80,75,85,65\n17,Fast-fashion synthetic shirt,Clothing,Polyester blend,Plastic mailer or tag,Low-cost synthetic garment,Short use cycles and difficult fibre recycling,Buy fewer durable items and extend wear life,Recycled fibres do not remove all shedding or end-of-life issues,35,40,35,45,30\n18,Durable repairable shirt,Clothing,Cotton or durable blend,Minimal packaging,Garment intended for repeated wear and repair,May still be discarded due to fit or style changes,Choose versatile fit and repair small damage,Material impact depends on fibre source and production,55,75,70,85,50\n19,Single-use food container,Food containers,Plastic or coated fibre,Single-use container,Takeaway container for one meal,Frequent packaging waste,Choose reusable containers where washing and return are practical,Food safety and cleaning requirements matter,30,25,20,30,30\n20,Reusable food container,Food containers,Durable glass or stainless steel,Minimal packaging,Container designed for repeated meal storage,Can be lost or left unused,Use regularly and maintain the seal,Heavier manufacture and washing must be considered,65,85,80,90,70\n21,Disposable batteries,Household,Primary battery chemistry,Cardboard and plastic pack,Single-use battery for low-drain devices,Repeated battery purchases and disposal,Use rechargeable batteries for compatible frequent-use devices,Rechargeable batteries are not ideal for every device or use,40,40,50,45,35\n22,Rechargeable battery set,Household,Rechargeable battery chemistry,Cardboard pack,Rechargeable cells for repeated use,May be unsuitable for infrequently used devices,Match charger and battery type to the device,Charging electricity and eventual proper recycling matter,55,80,70,85,55\n23,Plastic-wrapped soap bars,Personal care,Soap and plastic film,Plastic wrap,Bar soap in plastic packaging,Packaging after each purchase,Choose paper-wrapped or unpackaged options when hygiene and availability allow,Paper is not automatically better if coatings or waste are high,55,60,35,70,55\n24,Paper-wrapped soap bar,Personal care,Soap and paper,Paper wrap,Bar soap with paper packaging,Paper packaging still requires resources,Use fully and recycle packaging if locally accepted,"Check inks, coatings, and local recycling acceptance",60,60,75,70,65\n'
 
 @st.cache_data
 def load_data():
-    """Load products from common deployment paths, falling back safely if needed."""
     candidate_paths = [
         DATA_PATH,
         Path.cwd() / "products.csv",
@@ -129,18 +346,7 @@ def load_data():
 
     if df is None:
         df = pd.read_csv(io.StringIO(_FALLBACK_PRODUCTS_CSV))
-        if existing_paths:
-            load_notice = (
-                "The uploaded products.csv could not be parsed, so REVORA is using "
-                "its built-in validated product dataset. Replace products.csv with "
-                "the corrected file to use your editable dataset."
-            )
-        else:
-            load_notice = (
-                "products.csv was not found beside app.py. REVORA is using its "
-                "built-in product dataset so the app can still run. Upload the "
-                "corrected products.csv beside app.py when possible."
-            )
+        load_notice = "Using built-in validated product dataset."
 
     required_columns = [
         "product_id", "product_name", "category", "material", "packaging",
@@ -151,10 +357,7 @@ def load_data():
     missing = [column for column in required_columns if column not in df.columns]
     if missing:
         df = pd.read_csv(io.StringIO(_FALLBACK_PRODUCTS_CSV))
-        load_notice = (
-            "The product CSV was missing required columns, so REVORA is using "
-            "its built-in validated product dataset."
-        )
+        load_notice = "Using built-in validated product dataset."
 
     numeric = [
         "material_score", "lifecycle_score", "packaging_score",
@@ -165,69 +368,84 @@ def load_data():
     return df, load_notice
 
 df, data_load_notice = load_data()
-if data_load_notice and "built-in" in data_load_notice:
-    st.warning(data_load_notice)
 
-WEIGHTS = {
-    "material_score": 0.25,
-    "lifecycle_score": 0.25,
-    "packaging_score": 0.15,
-    "usage_score": 0.20,
-    "end_of_life_score": 0.15,
-}
-DISPLAY_NAMES = {
-    "material_score": "Materials & sourcing",
-    "lifecycle_score": "Durability & lifespan",
-    "packaging_score": "Packaging",
-    "usage_score": "Usage & reuse",
-    "end_of_life_score": "Repair & end-of-life",
-}
+def score_bar_color(score):
+    if score >= 70:
+        return "linear-gradient(90deg, #1b6741, #48b578)"
+    if score >= 45:
+        return "linear-gradient(90deg, #b87d14, #f0b429)"
+    return "linear-gradient(90deg, #a82828, #e05252)"
 
-def score_product(row):
-    return round(sum(float(row[col]) * weight for col, weight in WEIGHTS.items()), 1)
+def score_badge_label(score):
+    if score >= 70:
+        return "🌟 High Circularity", "#dcecdf", "#174c31"
+    if score >= 45:
+        return "⚖️ Moderate Impact", "#fff3cd", "#7a5200"
+    return "⚠️ High Waste Risk", "#fde2e2", "#8c1d1d"
 
-def intervention_for(problem, product_name):
-    rules = {
-        "Breaks before the rest wears out": (
-            "Prioritize a repairable or modular design",
-            "Look for replaceable parts, accessible fasteners, spare-part availability, and a repair guide. Avoid replacing the whole product when one component fails."
-        ),
-        "Too much product is dispensed or used": (
-            "Choose controlled-dose or refillable packaging",
-            "A measured dispenser, adjustable opening, or refill pack may reduce overuse and packaging. Check that the refill format is actually available locally."
-        ),
-        "Packaging is excessive": (
-            "Prefer right-sized, concentrated, or refill packaging",
-            "Compare packaging per use—not just package size. Concentrates and refills help only when they reduce total material and are used as intended."
-        ),
-        "Product is rarely used": (
-            "Borrow, share, or keep using what you own",
-            "Before buying a greener replacement, test whether sharing, renting, repairing, or changing your routine solves the need without a new product."
-        ),
-        "Single-use waste builds up": (
-            "Switch to a durable alternative if reuse is frequent",
-            "Compare expected lifetime uses, cleaning needs, and end-of-life options. A reusable product is most helpful when it replaces many single-use items."
-        ),
-        "Hard to recycle or dispose of": (
-            "Choose simpler materials and a known take-back route",
-            "Prefer clearly labelled materials and check local collection rules. 'Compostable' does not necessarily mean it can go in a home compost or local bin."
-        ),
-    }
-    return rules[problem]
+def build_svg_radar(primary_row, compare_row=None, is_dark=False):
+    """Build a crisp, zero-dependency 5-axis SVG Radar Chart comparing two products."""
+    axes = [
+        ("material_score", "Materials"),
+        ("lifecycle_score", "Lifespan"),
+        ("packaging_score", "Packaging"),
+        ("usage_score", "Usage"),
+        ("end_of_life_score", "End-of-Life"),
+    ]
+    cx, cy, radius = 185, 165, 105
+    grid_color = "#2e543e" if is_dark else "#cfe0cf"
+    label_color = "#d6f5e0" if is_dark else "#1d3b2a"
 
-def generate_recommendation(problem, category, current_row, candidates):
-    title, explanation = intervention_for(problem, current_row["product_name"])
-    if problem == "Product is rarely used":
-        candidates = candidates[candidates["category"] == category]
-        return title, explanation, candidates.sort_values("eco_score", ascending=False).head(3)
-    same_category = candidates[candidates["category"] == category].copy()
-    if same_category.empty:
-        same_category = candidates.copy()
-    current_score = float(current_row["eco_score"])
-    same_category = same_category[same_category["product_name"] != current_row["product_name"]]
-    same_category["score_gain"] = same_category["eco_score"] - current_score
-    same_category = same_category.sort_values(["eco_score", "score_gain"], ascending=False)
-    return title, explanation, same_category.head(3)
+    def pt(idx, val):
+        angle = -math.pi / 2 + idx * (2 * math.pi / 5)
+        r = (float(val) / 100.0) * radius
+        return cx + r * math.cos(angle), cy + r * math.sin(angle)
+
+    rings_svg = ""
+    for level in [25, 50, 75, 100]:
+        ring_pts = " ".join(f"{pt(i, level)[0]:.1f},{pt(i, level)[1]:.1f}" for i in range(5))
+        rings_svg += f'<polygon points="{ring_pts}" fill="none" stroke="{grid_color}" stroke-width="1" stroke-dasharray="3,3"/>'
+
+    spokes_svg = ""
+    labels_svg = ""
+    for i, (_, label) in enumerate(axes):
+        x_end, y_end = pt(i, 100)
+        spokes_svg += f'<line x1="{cx}" y1="{cy}" x2="{x_end:.1f}" y2="{y_end:.1f}" stroke="{grid_color}" stroke-width="1"/>'
+        lx, ly = pt(i, 124)
+        labels_svg += f'<text x="{lx:.1f}" y="{ly:.1f}" fill="{label_color}" font-size="11.5" font-weight="700" text-anchor="middle" dominant-baseline="middle">{label}</text>'
+
+    p1_pts = " ".join(f"{pt(i, primary_row[k])[0]:.1f},{pt(i, primary_row[k])[1]:.1f}" for i, (k, _) in enumerate(axes))
+    poly1_svg = f'<polygon points="{p1_pts}" fill="rgba(46, 139, 87, 0.34)" stroke="#2e8b57" stroke-width="2.6"/>'
+    dots1_svg = "".join(
+        f'<circle cx="{pt(i, primary_row[k])[0]:.1f}" cy="{pt(i, primary_row[k])[1]:.1f}" r="4" fill="#2e8b57"/>'
+        for i, (k, _) in enumerate(axes)
+    )
+
+    poly2_svg = ""
+    legend_2 = ""
+    if compare_row is not None:
+        p2_pts = " ".join(f"{pt(i, compare_row[k])[0]:.1f},{pt(i, compare_row[k])[1]:.1f}" for i, (k, _) in enumerate(axes))
+        poly2_svg = f'<polygon points="{p2_pts}" fill="rgba(240, 180, 41, 0.22)" stroke="#e09f1f" stroke-width="2.2" stroke-dasharray="5,3"/>'
+        legend_2 = f'<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;"><span style="width:12px;height:12px;border-radius:3px;background:#e09f1f;display:inline-block;"></span>{html.escape(str(compare_row["product_name"]))}</span>'
+
+    legend_1 = f'<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;"><span style="width:12px;height:12px;border-radius:3px;background:#2e8b57;display:inline-block;"></span>{html.escape(str(primary_row["product_name"]))}</span>'
+
+    return f"""
+    <div class="result-card" style="text-align:center;padding:1rem;">
+        <div style="font-weight:700;font-size:.95rem;margin-bottom:4px;">🕸️ 5-Axis Lifecycle Radar Comparison</div>
+        <svg viewBox="0 0 370 325" style="width:100%;max-width:360px;height:auto;">
+            {rings_svg}
+            {spokes_svg}
+            {poly2_svg}
+            {poly1_svg}
+            {dots1_svg}
+            {labels_svg}
+        </svg>
+        <div style="display:flex;justify-content:center;gap:16px;flex-wrap:wrap;margin-top:4px;">
+            {legend_1} {legend_2}
+        </div>
+    </div>
+    """
 
 # -------------------- Marketplace database --------------------
 
@@ -327,25 +545,67 @@ def safe_text(value):
 
 init_db()
 
-# -------------------- Sidebar and hero --------------------
+def score_product(row):
+    return round(sum(float(row[col]) * weight for col, weight in WEIGHTS.items()), 1)
 
-with st.sidebar:
-    st.markdown("## 🌱 REVORA")
-    st.caption("Waste-to-Design Intelligence")
-    st.markdown("---")
-    st.markdown("**Explore both sides of sustainability**")
-    st.write("♻️ Discover better product choices")
-    st.write("🤝 Pass useful items to someone who needs them")
-    st.markdown("---")
-    st.caption("Demo EcoScores are heuristic estimates, not verified lifecycle assessments.")
-    st.caption("Marketplace listings are community-submitted; arrange safe handovers.")
+def intervention_for(problem, product_name):
+    rules = {
+        "Breaks before the rest wears out": (
+            "Prioritize a repairable or modular design",
+            "Look for replaceable parts, accessible fasteners, spare-part availability, and a repair guide. Avoid replacing the whole product when one component fails."
+        ),
+        "Too much product is dispensed or used": (
+            "Choose controlled-dose or refillable packaging",
+            "A measured dispenser, adjustable opening, or refill pack may reduce overuse and packaging. Check that the refill format is actually available locally."
+        ),
+        "Packaging is excessive": (
+            "Prefer right-sized, concentrated, or refill packaging",
+            "Compare packaging per use—not just package size. Concentrates and refills help only when they reduce total material and are used as intended."
+        ),
+        "Product is rarely used": (
+            "Borrow, share, or keep using what you own",
+            "Before buying a greener replacement, test whether sharing, renting, repairing, or changing your routine solves the need without a new product."
+        ),
+        "Single-use waste builds up": (
+            "Switch to a durable alternative if reuse is frequent",
+            "Compare expected lifetime uses, cleaning needs, and end-of-life options. A reusable product is most helpful when it replaces many single-use items."
+        ),
+        "Hard to recycle or dispose of": (
+            "Choose simpler materials and a known take-back route",
+            "Prefer clearly labelled materials and check local collection rules. 'Compostable' does not necessarily mean it can go in a home compost or local bin."
+        ),
+    }
+    return rules[problem]
+
+def generate_recommendation(problem, category, current_row, candidates):
+    title, explanation = intervention_for(problem, current_row["product_name"])
+    if problem == "Product is rarely used":
+        candidates = candidates[candidates["category"] == category]
+        return title, explanation, candidates.sort_values("eco_score", ascending=False).head(3)
+    same_category = candidates[candidates["category"] == category].copy()
+    if same_category.empty:
+        same_category = candidates.copy()
+    current_score = float(current_row["eco_score"])
+    same_category = same_category[same_category["product_name"] != current_row["product_name"]]
+    same_category["score_gain"] = same_category["eco_score"] - current_score
+    same_category = same_category.sort_values(["eco_score", "score_gain"], ascending=False)
+    return title, explanation, same_category.head(3)
+
+# -------------------- Creative Aurora Hero Banner --------------------
 
 st.markdown("""
 <div class="hero">
-  <div class="pill">WASTE-TO-DESIGN INTELLIGENCE</div>
+  <span class="pill" style="background:rgba(224,245,189,0.22);color:#e6f9d5;border:1px solid rgba(224,245,189,0.4);">
+    🌱 WASTE-TO-DESIGN INTELLIGENCE & COMMUNITY MARKETPLACE
+  </span>
   <h1>REVORA</h1>
-  <p>Turn waste into better design.</p>
-  <p style="font-size:.94rem">Discover better product choices. Donate useful items. Request what you need. Keep good things in use.</p>
+  <p>Rethink materials. Reuse what works. Revive everyday objects before they become waste.</p>
+  <div class="hero-badges">
+    <span class="hero-badge">🌿 5-Pillar EcoScore & Radar Chart</span>
+    <span class="hero-badge">📸 AI Object Condition Scanner</span>
+    <span class="hero-badge">🎙️ Voice Search & Read Aloud</span>
+    <span class="hero-badge">🔒 PIN-Protected Community Reuse</span>
+  </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -353,19 +613,23 @@ tab_explore, tab_ai, tab_browse, tab_donate, tab_manage, tab_track = st.tabs([
     "🌿 Product Explorer", "🤖 REVORA AI Chat", "🔎 Browse Donations", "🎁 Donate an Item", "📬 Manage Requests", "📦 Track My Request"
 ])
 
-# -------------------- Original product explorer --------------------
+# -------------------- Product Explorer with Interactive SVG Radar Comparison --------------------
 
 with tab_explore:
-    st.markdown("## Explore the product lifecycle")
-    m1, m2, m3 = st.columns(3)
+    st.markdown("## 🌿 Explore the Product Lifecycle")
+    with db_connect() as conn:
+        total_available = conn.execute("SELECT COUNT(*) AS n FROM items WHERE status='Available'").fetchone()["n"]
+        total_donated = conn.execute("SELECT COUNT(*) AS n FROM items WHERE status='Donated'").fetchone()["n"]
+
+    m1, m2, m3, m4 = st.columns(4)
     with m1:
-        st.metric("Products in prototype", len(df))
+        st.metric("Products in Catalog", len(df))
     with m2:
-        st.metric("Product categories", df["category"].nunique())
+        st.metric("Product Categories", df["category"].nunique())
     with m3:
-        with db_connect() as conn:
-            total_available = conn.execute("SELECT COUNT(*) AS n FROM items WHERE status='Available'").fetchone()["n"]
-        st.metric("Items available to reuse", int(total_available))
+        st.metric("Available Donations", int(total_available))
+    with m4:
+        st.metric("Items Rehomed", int(total_donated))
 
     filter_col1, filter_col2, filter_col3 = st.columns([1, 1, 1])
     with filter_col1:
@@ -388,7 +652,7 @@ with tab_explore:
             key="explore_priority",
         )
 
-    search = st.text_input("Search products", placeholder="Try: bottle, notebook, cable, cleaner...", key="product_search")
+    search = st.text_input("🔎 Search products by keyword or material", placeholder="Try: bottle, notebook, cable, cleaner...", key="product_search")
     filtered = df.copy()
     if selected_category != "All categories":
         filtered = filtered[filtered["category"] == selected_category]
@@ -412,17 +676,29 @@ with tab_explore:
     else:
         cols = st.columns(3)
         for idx, (_, row) in enumerate(filtered.head(9).iterrows()):
+            icon = CATEGORY_ICONS.get(row["category"], "🌱")
+            score_val = float(row["eco_score"])
+            bar_bg = score_bar_color(score_val)
+            badge_text, badge_bg, badge_fg = score_badge_label(score_val)
             with cols[idx % 3]:
                 st.markdown(f"""
                 <div class="result-card">
-                    <div class="muted">{safe_text(row['category'])}</div>
-                    <h3 style="margin:.35rem 0">{safe_text(row['product_name'])}</h3>
-                    <div class="big-score">{row['eco_score']:.0f}<span style="font-size:.9rem;color:#627268"> / 100 EcoScore</span></div>
-                    <p style="min-height:3.2rem">{safe_text(row['description'])}</p>
-                    <span class="pill">{safe_text(row['material'])}</span>
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <span class="muted">{icon} {safe_text(row['category'])}</span>
+                        <span style="background:{badge_bg};color:{badge_fg};padding:3px 9px;border-radius:999px;font-size:.73rem;font-weight:700;">
+                            {badge_text}
+                        </span>
+                    </div>
+                    <h3 style="margin:.45rem 0 .2rem">{safe_text(row['product_name'])}</h3>
+                    <div class="big-score">{score_val:.0f}<span style="font-size:.88rem;font-weight:500;" class="muted"> / 100 EcoScore</span></div>
+                    <div class="eco-bar-track">
+                        <div class="eco-bar-fill" style="width:{min(100, max(5, score_val))}%;background:{bar_bg};"></div>
+                    </div>
+                    <p style="min-height:3rem;font-size:.93rem;">{safe_text(row['description'])}</p>
+                    <span class="pill">🧱 {safe_text(row['material'])}</span>
                 </div>
                 """, unsafe_allow_html=True)
-                if st.button("Analyze waste pattern", key=f"analyze_{row['product_id']}"):
+                if st.button("🔬 Analyze waste pattern", key=f"analyze_{row['product_id']}", use_container_width=True):
                     st.session_state.selected_product_id = row["product_id"]
 
     if "selected_product_id" in st.session_state:
@@ -430,50 +706,74 @@ with tab_explore:
         if not chosen_matches.empty:
             chosen = chosen_matches.iloc[0].copy()
             chosen["eco_score"] = score_product(chosen)
+            candidates = df.copy()
+            candidates["eco_score"] = candidates.apply(score_product, axis=1)
+            heading, details, recs = generate_recommendation(problem, chosen["category"], chosen, candidates)
+
             st.markdown("---")
-            st.markdown("## Your waste-to-design analysis")
-            st.markdown(f"### {chosen['product_name']}")
-            st.write(f"**Likely waste pattern:** {chosen['waste_risk']}")
-            st.write(f"**Design opportunity:** {chosen['design_opportunity']}")
-            st.write(f"**Material:** {chosen['material']} · **Packaging:** {chosen['packaging']}")
-            title, explanation = intervention_for(problem, chosen["product_name"])
-            st.success(f"**Suggested intervention: {title}**")
-            st.write(explanation)
-            st.markdown("### Lifecycle score breakdown")
+            st.markdown("## 🔬 Your Waste-to-Design Analysis & Radar Comparison")
+            st.markdown(f"### {CATEGORY_ICONS.get(chosen['category'], '🌱')} {chosen['product_name']}")
+
+            info_col, radar_col = st.columns([1.35, 1])
+            with info_col:
+                st.markdown(f"""
+                <div class="marketplace-note">
+                    <b>⚠️ Likely Waste Pattern:</b><br>{safe_text(chosen['waste_risk'])}<br><br>
+                    <b>🧱 Material:</b> {safe_text(chosen['material'])} &nbsp;·&nbsp; <b>📦 Packaging:</b> {safe_text(chosen['packaging'])}
+                </div>
+                <div class="marketplace-note" style="border-left-color:#2e8b57;">
+                    <b>💡 Design Opportunity:</b><br>{safe_text(chosen['design_opportunity'])}<br><br>
+                    <b>⚖️ Key Trade-off:</b> {safe_text(chosen['tradeoff'])}
+                </div>
+                """, unsafe_allow_html=True)
+                title, explanation = intervention_for(problem, chosen["product_name"])
+                st.success(f"**Suggested Design Intervention: {title}** — {explanation}")
+
+            with radar_col:
+                compare_options = df[df["product_name"] != chosen["product_name"]]["product_name"].tolist()
+                default_comp = recs.iloc[0]["product_name"] if not recs.empty else compare_options[0]
+                comp_name = st.selectbox(
+                    "Compare on Radar Chart against:",
+                    compare_options,
+                    index=compare_options.index(default_comp) if default_comp in compare_options else 0,
+                    key="radar_compare_select",
+                )
+                comp_row = df[df["product_name"] == comp_name].iloc[0]
+                st.markdown(build_svg_radar(chosen, comp_row, is_dark=dark_mode), unsafe_allow_html=True)
+
+            st.markdown("### 📊 Lifecycle Score Breakdown")
             score_cols = st.columns(5)
             for col, key in zip(score_cols, WEIGHTS.keys()):
                 with col:
                     st.metric(DISPLAY_NAMES[key], f"{chosen[key]:.0f}/100")
             st.progress(min(1.0, max(0.0, chosen["eco_score"] / 100)))
-            st.caption(f"Weighted EcoScore: {chosen['eco_score']:.1f}/100. Weights: materials 25%, lifespan 25%, packaging 15%, usage 20%, end-of-life 15%.")
-            candidates = df.copy()
-            candidates["eco_score"] = candidates.apply(score_product, axis=1)
-            heading, details, recs = generate_recommendation(problem, chosen["category"], chosen, candidates)
-            st.markdown("### Recommended next steps")
-            st.write(details)
-            if problem == "Product is rarely used":
-                st.info("Consider borrowing, sharing, or keeping your current item before purchasing a replacement.")
+
+            st.markdown("### 🔄 Better-Scoring Alternatives in This Category")
             if recs.empty:
                 st.info("No alternative in this sample dataset. Try another category or product.")
             else:
                 rec_cols = st.columns(min(3, len(recs)))
                 for col, (_, rec) in zip(rec_cols, recs.iterrows()):
+                    gain = rec["eco_score"] - chosen["eco_score"]
+                    gain_str = f"+{gain:.0f} pts" if gain > 0 else f"{gain:.0f} pts"
                     with col:
                         st.markdown(f"""
                         <div class="result-card">
-                          <div class="muted">{safe_text(rec['category'])}</div>
-                          <h4>{safe_text(rec['product_name'])}</h4>
-                          <div class="big-score">{rec['eco_score']:.0f}<span style="font-size:.8rem;color:#627268"> / 100</span></div>
+                          <div style="display:flex;justify-content:space-between;">
+                            <span class="muted">{safe_text(rec['category'])}</span>
+                            <span class="pill">{gain_str}</span>
+                          </div>
+                          <h4 style="margin:.4rem 0">{safe_text(rec['product_name'])}</h4>
+                          <div class="big-score">{rec['eco_score']:.0f}<span style="font-size:.8rem;" class="muted"> / 100</span></div>
                           <p>{safe_text(rec['description'])}</p>
-                          <p><b>Trade-off:</b> {safe_text(rec['tradeoff'])}</p>
+                          <p style="font-size:.88rem;"><b>Trade-off:</b> {safe_text(rec['tradeoff'])}</p>
                         </div>
                         """, unsafe_allow_html=True)
-            st.caption("Recommendations use an illustrative demo dataset. Verify product claims and lifecycle evidence before making real-world comparisons.")
-    with st.expander("How the EcoScore works"):
-        st.write("EcoScore is a weighted heuristic score designed for this prototype.")
-        st.latex(r"EcoScore = 0.25M + 0.25L + 0.15P + 0.20U + 0.15E")
+
+    with st.expander("ℹ️ How the EcoScore works"):
+        st.write("EcoScore is a weighted heuristic score designed for this prototype. You can customize the weights live in the left sidebar!")
+        st.latex(r"EcoScore = w_M M + w_L L + w_P P + w_U U + w_E E")
         st.write("M = materials and sourcing; L = durability and lifespan; P = packaging; U = usage and reuse; E = repairability and end-of-life.")
-        st.warning("Values are illustrative demo inputs, not measured carbon footprints or certified environmental claims.")
 
 # -------------------- Gemini AI chatbox, Object Scanner & Voice Search --------------------
 
@@ -488,7 +788,6 @@ def get_gemini_client():
     return genai.Client(api_key=api_key)
 
 def generate_with_fallback(client, contents, config=None):
-    """Try standard Gemini models with automatic fallback."""
     for model_name in ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-2.0-flash"]:
         try:
             return client.models.generate_content(
@@ -501,7 +800,6 @@ def generate_with_fallback(client, contents, config=None):
     raise RuntimeError("All configured Gemini models failed to respond.")
 
 def render_tts_buttons(text_to_read, key_suffix):
-    """Render working browser Text-to-Speech buttons inside a lightweight component."""
     clean = (
         str(text_to_read)
         .replace("*", "")
@@ -534,7 +832,7 @@ with tab_ai:
     st.markdown("## 🤖 REVORA AI: Object Scanner, Voice Search & Chat")
     st.write("Scan any household object to inspect its condition, search using your voice, or chat with REVORA AI.")
     st.markdown(
-        "<div class='marketplace-note'><b>REVORA AI</b> gives practical sustainability guidance, voice answers, and visual condition estimates. "
+        "<div class='marketplace-note'><b>REVORA AI Studio</b> combines computer vision, voice recognition, and circular-economy guidance. "
         "Always inspect physical safety, electrical integrity, and hygiene in person before donating or repairing an item.</div>",
         unsafe_allow_html=True,
     )
@@ -542,7 +840,6 @@ with tab_ai:
     if "revora_chat_history" not in st.session_state:
         st.session_state.revora_chat_history = []
 
-    # ---- PART 1: AI OBJECT SCANNER ----
     with st.expander("📸 Scan an Object (Condition, Repair & Donation Analyzer)", expanded=True):
         scan_mode = st.radio(
             "Choose input method",
@@ -591,10 +888,10 @@ Analyze the object in this image and return a strict JSON object with these exac
 - "condition_status": Must be one of ["Usable", "Needs Minor Repair", "Bad Condition"].
 - "marketplace_condition": Must be one of ["Like new", "Good", "Used but working", "Needs minor repair"].
 - "condition_score": Integer from 0 to 100 estimating physical usability.
-- "object_explanation": 2-3 sentences explaining what the object is, its likely material composition, and visible condition details (wear, scratches, tears, rust, or cleanliness).
+- "object_explanation": 2-3 sentences explaining what the object is, its likely material composition, and visible condition details.
 - "recommended_action": Must be one of ["Donate on REVORA", "Repair & Reuse", "Upcycle / Recycle Safely"].
-- "action_advice": Practical step-by-step advice explaining why you recommend donating, repairing, or recycling it, and how the user can do it safely.
-- "draft_listing_description": A polite, honest 2-sentence description the user can use if listing this item on the REVORA Donate marketplace.
+- "action_advice": Practical step-by-step advice explaining why you recommend donating, repairing, or recycling it.
+- "draft_listing_description": A polite, honest 2-sentence description the user can use if listing this item on REVORA.
 
 User's additional note about the item: "{user_scan_note.strip() or 'None provided'}"
 """
@@ -632,14 +929,11 @@ User's additional note about the item: "{user_scan_note.strip() or 'None provide
                 score = int(res.get("condition_score", 50))
 
                 if status == "Usable":
-                    badge_color = "#1b6741"
-                    badge_bg = "#dcecdf"
+                    badge_color, badge_bg = "#1b6741", "#dcecdf"
                 elif status == "Needs Minor Repair":
-                    badge_color = "#855800"
-                    badge_bg = "#fff1cc"
+                    badge_color, badge_bg = "#855800", "#fff1cc"
                 else:
-                    badge_color = "#8c1d1d"
-                    badge_bg = "#fadddd"
+                    badge_color, badge_bg = "#8c1d1d", "#fadddd"
 
                 with result_col:
                     st.markdown(f"""
@@ -649,7 +943,9 @@ User's additional note about the item: "{user_scan_note.strip() or 'None provide
                         </span>
                         <h3 style="margin:.5rem 0 .25rem">{safe_text(res.get('object_name', 'Scanned Object'))}</h3>
                         <div class="muted">Suggested Category: {safe_text(res.get('marketplace_category', 'Other'))}</div>
-                        <hr style="margin:.7rem 0;border:none;border-top:1px solid #d9e5d7;">
+                        <div class="eco-bar-track">
+                            <div class="eco-bar-fill" style="width:{min(100, max(5, score))}%;background:{score_bar_color(score)};"></div>
+                        </div>
                         <p><b>🔎 About & Condition Details:</b><br>{safe_text(res.get('object_explanation', ''))}</p>
                         <p><b>🌱 Recommendation ({safe_text(res.get('recommended_action', ''))}):</b><br>{safe_text(res.get('action_advice', ''))}</p>
                     </div>
@@ -671,7 +967,6 @@ User's additional note about the item: "{user_scan_note.strip() or 'None provide
     st.markdown("---")
     st.markdown("### 🎙️ Voice Search & AI Chat")
 
-    # ---- PART 2: VOICE SEARCH & TEXT CHATBOX ----
     chat_col, clear_col = st.columns([5, 1])
     with chat_col:
         st.caption("Powered by Google's Gemini API · Click the microphone to ask by voice, or type your question below.")
@@ -682,26 +977,22 @@ User's additional note about the item: "{user_scan_note.strip() or 'None provide
             st.session_state.pop("last_voice_hash", None)
             st.rerun()
 
-    # Display conversation history with Read Aloud buttons on assistant messages
     for idx, message in enumerate(st.session_state.revora_chat_history):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
             if message["role"] == "assistant":
                 render_tts_buttons(message["content"], f"hist_{idx}")
 
-    # Voice Search input box
     voice_recording = st.audio_input(
         "🎙️ Voice Search: Click the mic, speak your question, and click stop",
         key="revora_voice_search",
     )
 
-    # Text Chat input box
     prompt = st.chat_input(
         "Or type your question about repairing, donating, or sustainability...",
         key="revora_chat_input",
     )
 
-    # Check if a new voice recording was submitted
     new_voice_bytes = None
     if voice_recording is not None:
         raw_bytes = voice_recording.getvalue()
@@ -711,11 +1002,7 @@ User's additional note about the item: "{user_scan_note.strip() or 'None provide
             new_voice_bytes = raw_bytes
 
     if prompt or new_voice_bytes:
-        if prompt:
-            user_display = prompt
-        else:
-            user_display = "🎙️ *[Voice Search Query]*"
-
+        user_display = prompt if prompt else "🎙️ *[Voice Search Query]*"
         st.session_state.revora_chat_history.append({"role": "user", "content": user_display})
         with st.chat_message("user"):
             st.markdown(user_display)
@@ -767,14 +1054,10 @@ Your goals:
         except Exception as e:
             st.error(f"REVORA AI couldn't connect to Gemini. Check that your API key is valid and quota is available. ({e})")
 
-    if not st.session_state.revora_chat_history:
-        st.markdown("**Try scanning an item above, clicking the mic for Voice Search, or asking:**")
-        st.caption("How can I fix a loose chair leg? · Should I repair or replace a torn backpack? · What items are good to donate?")
-
 # -------------------- Browse available items and submit requests --------------------
 
 with tab_browse:
-    st.markdown("## ♻️ Browse donations")
+    st.markdown("## ♻️ Browse Community Donations")
     st.write("Find useful items nearby and request them directly from the donor.")
     browse_col1, browse_col2, browse_col3 = st.columns([1, 1, 1.2])
     with browse_col1:
@@ -783,24 +1066,29 @@ with tab_browse:
     with browse_col2:
         browse_search = st.text_input("Search items or area", placeholder="e.g. textbooks, Bengaluru", key="browse_search")
     with browse_col3:
-        st.caption("Only available items are shown. Donor contact details are kept private until a request is approved.")
+        st.caption("🔒 Privacy-First: Donor contact details remain hidden until your request is approved.")
     items = get_items(status="Available", category=browse_category, search_text=browse_search.strip())
     if not items:
-        st.info("No matching donations yet. Be the first to list a useful item in the Donate an Item tab.")
+        st.info("No matching donations yet. Be the first to list a useful item in the '🎁 Donate an Item' tab!")
     else:
-        st.caption(f"{len(items)} available item(s)")
+        st.caption(f"Showing {len(items)} available item(s)")
         for item in items:
+            icon = CATEGORY_ICONS.get(item["category"], "🎁")
             with st.container(border=True):
-                left, right = st.columns([3, 1])
+                left, right = st.columns([2.6, 1.2])
                 with left:
-                    st.markdown(f"### {safe_text(item['item_name'])}")
-                    st.markdown(f"<span class='pill'>{safe_text(item['category'])}</span> &nbsp; <span class='muted'>{safe_text(item['item_condition'])}</span>", unsafe_allow_html=True)
-                    st.write(safe_text(item["description"]))
-                    st.caption(f"📍 {safe_text(item['location'])} · Listed by {safe_text(item['donor_name'])} · {item['created_at'][:10]}")
-                    st.caption(f"{item_request_count(item['id'])} request(s) received")
+                    st.markdown(f"""
+                    <div class="result-card" style="margin-bottom:0;">
+                        <span class="pill">{icon} {safe_text(item['category'])}</span>
+                        &nbsp;<span class="muted">· Condition: <b>{safe_text(item['item_condition'])}</b></span>
+                        <h3 style="margin:.45rem 0">{safe_text(item['item_name'])}</h3>
+                        <p>{safe_text(item['description'])}</p>
+                        <div class="muted">📍 {safe_text(item['location'])} · Listed by <b>{safe_text(item['donor_name'])}</b> · {item['created_at'][:10]} · 📬 {item_request_count(item['id'])} request(s)</div>
+                    </div>
+                    """, unsafe_allow_html=True)
                 with right:
                     with st.form(f"request_form_{item['id']}"):
-                        st.markdown("**Request this item**")
+                        st.markdown("**✋ Request this item**")
                         req_name = st.text_input("Your name", key=f"req_name_{item['id']}", max_chars=80)
                         req_contact = st.text_input("Your email or phone", key=f"req_contact_{item['id']}", max_chars=120)
                         req_message = st.text_area("Message to donor", placeholder="Tell the donor why you need it and when you can collect it.", key=f"req_msg_{item['id']}", max_chars=500)
@@ -829,11 +1117,11 @@ with tab_browse:
 # -------------------- Donate an item --------------------
 
 with tab_donate:
-    st.markdown("## 🎁 Give a useful item a second life")
+    st.markdown("## 🎁 Give a Useful Item a Second Life")
     st.write("List items that are clean, safe, and in usable condition. You can approve or decline requests later.")
     st.markdown("""
     <div class="marketplace-note">
-    <b>Privacy tip:</b> Your contact information is only shown to requesters after you approve their request.
+    <b>🔒 Privacy Guarantee:</b> Your contact information is only shown to requesters after you approve their request.
     Keep your listing PIN private; it is used to manage requests for your item.
     </div>
     """, unsafe_allow_html=True)
@@ -861,7 +1149,7 @@ with tab_donate:
             max_chars=1000,
         )
         safety_confirm = st.checkbox("I confirm this item is legal, safe to give away, and described honestly.")
-        submit_donation = st.form_submit_button("Publish donation listing", use_container_width=True)
+        submit_donation = st.form_submit_button("🌱 Publish Donation Listing", use_container_width=True)
     if submit_donation:
         if not all([item_name.strip(), item_location.strip(), donor_name.strip(), donor_contact.strip(), item_description.strip(), listing_pin]):
             st.error("Please complete all required fields.")
@@ -888,7 +1176,7 @@ with tab_donate:
 # -------------------- Donor request management --------------------
 
 with tab_manage:
-    st.markdown("## 📬 Manage your donation requests")
+    st.markdown("## 📬 Manage Your Donation Requests")
     st.write("Enter your listing ID and private PIN to view requests and approve or decline them.")
     st.markdown("""
     <div class="marketplace-note">
@@ -898,7 +1186,7 @@ with tab_manage:
     with st.form("manage_listing_form"):
         manage_id_text = st.text_input("Listing ID", placeholder="e.g. REV-00012")
         manage_pin = st.text_input("Private listing PIN", type="password")
-        load_listing = st.form_submit_button("View requests", use_container_width=True)
+        load_listing = st.form_submit_button("🔑 View Requests", use_container_width=True)
     if load_listing:
         cleaned = manage_id_text.strip().upper()
         try:
@@ -969,14 +1257,14 @@ with tab_manage:
 # -------------------- Requester tracking --------------------
 
 with tab_track:
-    st.markdown("## 📦 Track your request")
+    st.markdown("## 📦 Track Your Request")
     st.write("Check whether the donor has approved your request. Enter the request ID shown when you submitted it and the same contact detail you used.")
     if st.session_state.get("last_request_id"):
         st.info(f"Your most recent request ID in this session: **REV-R{st.session_state.last_request_id:05d}**")
     with st.form("track_request_form"):
         track_id_text = st.text_input("Request ID", placeholder="e.g. REV-R00012")
         track_contact = st.text_input("Your email or phone used for the request")
-        track_submit = st.form_submit_button("Check request status", use_container_width=True)
+        track_submit = st.form_submit_button("🔎 Check Request Status", use_container_width=True)
     if track_submit:
         cleaned_request_id = track_id_text.strip().upper()
         try:
@@ -1004,4 +1292,3 @@ with tab_track:
 st.markdown("---")
 st.markdown("### 🌍 Small actions, less waste")
 st.caption("REVORA is a community reuse prototype. Meet in a public place where practical, inspect items before accepting them, avoid sending money to strangers, and never list unsafe or illegal items.")
-st.caption("Deployment note: this starter version stores marketplace data in a local SQLite database. On Streamlit Community Cloud, that database can be lost when the app is rebuilt or its runtime is reset. For reliable long-term shared listings, connect a hosted database such as Supabase before launching publicly.")
