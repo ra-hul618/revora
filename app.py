@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from pathlib import Path
 import sqlite3
@@ -474,7 +475,7 @@ with tab_explore:
         st.write("M = materials and sourcing; L = durability and lifespan; P = packaging; U = usage and reuse; E = repairability and end-of-life.")
         st.warning("Values are illustrative demo inputs, not measured carbon footprints or certified environmental claims.")
 
-# -------------------- Gemini AI chatbox & Object Scanner --------------------
+# -------------------- Gemini AI chatbox, Object Scanner & Voice Search --------------------
 
 def get_gemini_client():
     try:
@@ -487,7 +488,7 @@ def get_gemini_client():
     return genai.Client(api_key=api_key)
 
 def generate_with_fallback(client, contents, config=None):
-    """Try the configured model first, falling back safely if unavailable."""
+    """Try standard Gemini models with automatic fallback."""
     for model_name in ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-2.0-flash"]:
         try:
             return client.models.generate_content(
@@ -499,11 +500,41 @@ def generate_with_fallback(client, contents, config=None):
             continue
     raise RuntimeError("All configured Gemini models failed to respond.")
 
+def render_tts_buttons(text_to_read, key_suffix):
+    """Render working browser Text-to-Speech buttons inside a lightweight component."""
+    clean = (
+        str(text_to_read)
+        .replace("*", "")
+        .replace("#", "")
+        .replace("`", "")
+        .replace("\n", " ")
+    )
+    js_safe_text = json.dumps(clean)
+    components.html(
+        f"""
+        <div style="display:flex;gap:8px;align-items:center;font-family:sans-serif;margin:0;padding:0;">
+            <button onclick='
+                window.speechSynthesis.cancel();
+                const u = new SpeechSynthesisUtterance({js_safe_text});
+                u.rate = 1.0;
+                window.speechSynthesis.speak(u);
+            ' style="background:#eaf1e7;border:1px solid #b9d9b8;color:#174c31;padding:4px 11px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:600;">
+                🔊 Read Aloud
+            </button>
+            <button onclick='window.speechSynthesis.cancel();'
+              style="background:#fdf2f2;border:1px solid #f8d7da;color:#8c1d1d;padding:4px 11px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:600;">
+                ⏹️ Stop
+            </button>
+        </div>
+        """,
+        height=36,
+    )
+
 with tab_ai:
-    st.markdown("## 🤖 REVORA AI: Object Scanner & Sustainability Chat")
-    st.write("Scan any household item to check its condition, see whether you should donate or repair it, or chat with REVORA AI.")
+    st.markdown("## 🤖 REVORA AI: Object Scanner, Voice Search & Chat")
+    st.write("Scan any household object to inspect its condition, search using your voice, or chat with REVORA AI.")
     st.markdown(
-        "<div class='marketplace-note'><b>REVORA AI</b> gives practical sustainability guidance and visual condition estimates. "
+        "<div class='marketplace-note'><b>REVORA AI</b> gives practical sustainability guidance, voice answers, and visual condition estimates. "
         "Always inspect physical safety, electrical integrity, and hygiene in person before donating or repairing an item.</div>",
         unsafe_allow_html=True,
     )
@@ -624,6 +655,11 @@ User's additional note about the item: "{user_scan_note.strip() or 'None provide
                     </div>
                     """, unsafe_allow_html=True)
 
+                    render_tts_buttons(
+                        f"{res.get('object_name', '')}. Condition is {status}, score {score} out of 100. {res.get('object_explanation', '')} Recommendation: {res.get('action_advice', '')}",
+                        "scan_tts",
+                    )
+
                     if status in ["Usable", "Needs Minor Repair"]:
                         if st.button("🎁 Pre-fill 'Donate an Item' Form with this Scan", key="prefill_donate_btn", use_container_width=True):
                             st.session_state.prefill_item_name = res.get("object_name", "")
@@ -633,30 +669,63 @@ User's additional note about the item: "{user_scan_note.strip() or 'None provide
                             st.success("Details copied! Open the '🎁 Donate an Item' tab above to review and publish your listing.")
 
     st.markdown("---")
-    st.markdown("### 💬 Ask REVORA AI a Follow-Up Question")
+    st.markdown("### 🎙️ Voice Search & AI Chat")
 
-    # ---- PART 2: TEXT CHATBOX ----
+    # ---- PART 2: VOICE SEARCH & TEXT CHATBOX ----
     chat_col, clear_col = st.columns([5, 1])
     with chat_col:
-        st.caption("Powered by Google's Gemini API · Ask follow-up repair, recycling, or reuse questions below.")
+        st.caption("Powered by Google's Gemini API · Click the microphone to ask by voice, or type your question below.")
     with clear_col:
         if st.button("Clear chat", key="clear_revora_chat"):
             st.session_state.revora_chat_history = []
             st.session_state.pop("last_scan_result", None)
+            st.session_state.pop("last_voice_hash", None)
             st.rerun()
 
-    for message in st.session_state.revora_chat_history:
+    # Display conversation history with Read Aloud buttons on assistant messages
+    for idx, message in enumerate(st.session_state.revora_chat_history):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            if message["role"] == "assistant":
+                render_tts_buttons(message["content"], f"hist_{idx}")
 
-    prompt = st.chat_input("Ask REVORA anything about repairing, donating, or sustainability...", key="revora_chat_input")
-    if prompt:
-        st.session_state.revora_chat_history.append({"role": "user", "content": prompt})
+    # Voice Search input box
+    voice_recording = st.audio_input(
+        "🎙️ Voice Search: Click the mic, speak your question, and click stop",
+        key="revora_voice_search",
+    )
+
+    # Text Chat input box
+    prompt = st.chat_input(
+        "Or type your question about repairing, donating, or sustainability...",
+        key="revora_chat_input",
+    )
+
+    # Check if a new voice recording was submitted
+    new_voice_bytes = None
+    if voice_recording is not None:
+        raw_bytes = voice_recording.getvalue()
+        voice_hash = hashlib.md5(raw_bytes).hexdigest()
+        if st.session_state.get("last_voice_hash") != voice_hash:
+            st.session_state["last_voice_hash"] = voice_hash
+            new_voice_bytes = raw_bytes
+
+    if prompt or new_voice_bytes:
+        if prompt:
+            user_display = prompt
+        else:
+            user_display = "🎙️ *[Voice Search Query]*"
+
+        st.session_state.revora_chat_history.append({"role": "user", "content": user_display})
         with st.chat_message("user"):
-            st.markdown(prompt)
+            st.markdown(user_display)
+            if new_voice_bytes:
+                st.audio(new_voice_bytes)
 
         try:
             client = get_gemini_client()
+            from google.genai import types
+
             recent_history = st.session_state.revora_chat_history[-12:]
             transcript = "\n\n".join(
                 ("User" if m["role"] == "user" else "REVORA AI") + ": " + m["content"]
@@ -666,28 +735,40 @@ User's additional note about the item: "{user_scan_note.strip() or 'None provide
 
 Your goals:
 - Give practical, affordable ways to reduce waste, reuse, repair, share, and donate usable items.
-- If the user recently scanned an object in the conversation, help them with specific DIY repair tips, cleaning advice, or how to donate/recycle it safely.
+- If the user sent a voice recording, first write '**You asked:** "<transcribed question>"' on the first line, and then provide a clear, helpful answer.
+- If the user recently scanned an object, help them with specific DIY repair tips, cleaning advice, or how to donate/recycle it safely.
 - Explain trade-offs honestly; do not invent exact carbon, water, money, or landfill savings.
 - Encourage users to use REVORA's Donate & Request tabs when they want to pass on or request usable items.
-- For recycling questions, explain that local rules differ and suggest checking the local authority.
 - Keep answers friendly, clear, and reasonably concise.
 """
             with st.chat_message("assistant"):
-                with st.spinner("REVORA AI is thinking..."):
+                with st.spinner("REVORA AI is listening and thinking..."):
+                    if new_voice_bytes:
+                        mime_type = voice_recording.type or "audio/wav"
+                        audio_part = types.Part.from_bytes(data=new_voice_bytes, mime_type=mime_type)
+                        contents_payload = [
+                            audio_part,
+                            system_context + "\n\nConversation so far:\n" + transcript + "\n\nTranscribe the user's voice query and answer it helpfully.",
+                        ]
+                    else:
+                        contents_payload = system_context + "\n\nConversation so far:\n" + transcript
+
                     response = generate_with_fallback(
                         client,
-                        contents=system_context + "\n\nConversation so far:\n" + transcript,
+                        contents=contents_payload,
                     )
                     answer = response.text or "I couldn't generate a response this time. Please try asking in a different way."
                 st.markdown(answer)
+                render_tts_buttons(answer, "latest_reply")
+
             st.session_state.revora_chat_history.append({"role": "assistant", "content": answer})
         except KeyError:
             st.error("Gemini API key not configured. Add GEMINI_API_KEY in your Streamlit Cloud app Settings → Secrets, then reboot the app.")
-        except Exception:
-            st.error("REVORA AI couldn't connect to Gemini. Check that your API key is valid, the google-genai package is installed, and your API quota/model access is available.")
+        except Exception as e:
+            st.error(f"REVORA AI couldn't connect to Gemini. Check that your API key is valid and quota is available. ({e})")
 
     if not st.session_state.revora_chat_history:
-        st.markdown("**Try scanning an item above, or ask:**")
+        st.markdown("**Try scanning an item above, clicking the mic for Voice Search, or asking:**")
         st.caption("How can I fix a loose chair leg? · Should I repair or replace a torn backpack? · What items are good to donate?")
 
 # -------------------- Browse available items and submit requests --------------------
