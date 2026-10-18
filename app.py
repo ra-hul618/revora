@@ -67,6 +67,104 @@ if not st.session_state.get("revora_splash_seen", False):
     </div>
     """, unsafe_allow_html=True)
 
+# -------------------- Marketplace database setup (DEFINED FIRST) --------------------
+
+def db_connect():
+    conn = sqlite3.connect(DB_PATH, timeout=20, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+def init_db():
+    with db_connect() as conn:
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            item_condition TEXT NOT NULL,
+            location TEXT NOT NULL,
+            description TEXT NOT NULL,
+            donor_name TEXT NOT NULL,
+            donor_contact TEXT NOT NULL,
+            contact_type TEXT NOT NULL,
+            pin_hash TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Available',
+            created_at TEXT NOT NULL
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL,
+            requester_name TEXT NOT NULL,
+            requester_contact TEXT NOT NULL,
+            message TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Pending',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(item_id) REFERENCES items(id)
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS wishes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wish_name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            location TEXT NOT NULL,
+            description TEXT NOT NULL,
+            requester_name TEXT NOT NULL,
+            requester_contact TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Active',
+            created_at TEXT NOT NULL
+        )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_items_status ON items(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_wishes_status ON wishes(status)")
+
+def hash_pin(pin): return hashlib.sha256(pin.encode("utf-8")).hexdigest()
+def now_iso(): return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def safe_text(value): return html.escape(str(value or ""))
+
+init_db()
+
+def get_items(status=None, category=None, search_text=None):
+    sql = "SELECT * FROM items"
+    clauses, params = [], []
+    if status and status != "All":
+        clauses.append("status = ?"); params.append(status)
+    if category and category != "All categories":
+        clauses.append("category = ?"); params.append(category)
+    if search_text:
+        clauses.append("(lower(item_name) LIKE ? OR lower(description) LIKE ? OR lower(location) LIKE ?)")
+        term = f"%{search_text.lower()}%"
+        params.extend([term, term, term])
+    if clauses: sql += " WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY created_at DESC"
+    with db_connect() as conn:
+        return conn.execute(sql, params).fetchall()
+
+def get_item(item_id):
+    with db_connect() as conn:
+        return conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+
+def get_requests_for_item(item_id):
+    with db_connect() as conn:
+        return conn.execute("SELECT * FROM requests WHERE item_id = ? ORDER BY created_at DESC", (item_id,)).fetchall()
+
+def get_request_for_tracking(request_id, requester_contact):
+    with db_connect() as conn:
+        return conn.execute(
+            """SELECT r.*, i.item_name, i.status AS item_status, i.donor_contact, i.contact_type, i.location
+               FROM requests r JOIN items i ON i.id = r.item_id
+               WHERE r.id = ? AND lower(r.requester_contact) = lower(?)""",
+            (request_id, requester_contact.strip())
+        ).fetchone()
+
+def item_request_count(item_id):
+    with db_connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS n FROM requests WHERE item_id = ?", (item_id,)).fetchone()
+        return int(row["n"])
+
 # -------------------- Sidebar with Theme Toggle & Weight Customizer --------------------
 
 DEFAULT_WEIGHTS = {
@@ -301,66 +399,6 @@ def load_data():
 
 df, data_load_notice = load_data()
 
-# -------------------- Marketplace database setup --------------------
-
-def db_connect():
-    conn = sqlite3.connect(DB_PATH, timeout=20, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-def init_db():
-    with db_connect() as conn:
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_name TEXT NOT NULL,
-            category TEXT NOT NULL,
-            item_condition TEXT NOT NULL,
-            location TEXT NOT NULL,
-            description TEXT NOT NULL,
-            donor_name TEXT NOT NULL,
-            donor_contact TEXT NOT NULL,
-            contact_type TEXT NOT NULL,
-            pin_hash TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Available',
-            created_at TEXT NOT NULL
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_id INTEGER NOT NULL,
-            requester_name TEXT NOT NULL,
-            requester_contact TEXT NOT NULL,
-            message TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Pending',
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(item_id) REFERENCES items(id)
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS wishes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            wish_name TEXT NOT NULL,
-            category TEXT NOT NULL,
-            location TEXT NOT NULL,
-            description TEXT NOT NULL,
-            requester_name TEXT NOT NULL,
-            requester_contact TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Active',
-            created_at TEXT NOT NULL
-        )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_items_status ON items(status)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_wishes_status ON wishes(status)")
-
-def hash_pin(pin): return hashlib.sha256(pin.encode("utf-8")).hexdigest()
-def now_iso(): return datetime.now(timezone.utc).isoformat(timespec="seconds")
-def safe_text(value): return html.escape(str(value or ""))
-
-init_db()
-
 def score_product(row):
     return round(sum(float(row[col]) * weight for col, weight in WEIGHTS.items()), 1)
 
@@ -396,8 +434,7 @@ def build_svg_radar(primary_row, compare_row=None, is_dark=False):
         ring_pts = " ".join(f"{pt(i, level)[0]:.1f},{pt(i, level)[1]:.1f}" for i in range(5))
         rings_svg += f'<polygon points="{ring_pts}" fill="none" stroke="{grid_color}" stroke-width="1" stroke-dasharray="3,3"/>'
 
-    spokes_svg = ""
-    labels_svg = ""
+    spokes_svg, labels_svg = "", ""
     for i, (_, label) in enumerate(axes):
         x_end, y_end = pt(i, 100)
         spokes_svg += f'<line x1="{cx}" y1="{cy}" x2="{x_end:.1f}" y2="{y_end:.1f}" stroke="{grid_color}" stroke-width="1"/>'
@@ -433,7 +470,6 @@ with db_connect() as conn:
     available_count = conn.execute("SELECT COUNT(*) AS n FROM items WHERE status='Available'").fetchone()["n"]
     wishes_count = conn.execute("SELECT COUNT(*) AS n FROM wishes WHERE status='Active'").fetchone()["n"]
 
-# Heuristic impact estimates (Avg 1.5kg waste diverted & 4.2kg CO2 saved per rehomed item)
 total_waste_diverted_kg = donated_count * 1.5
 total_co2_saved_kg = donated_count * 4.2
 
@@ -755,7 +791,7 @@ with tab_ai:
             st.session_state.revora_chat_history.append({"role": "assistant", "content": answer})
         except Exception as e: st.error(f"Error connecting to Gemini: {e}")
 
-# -------------------- Tab 4: Browse Donations ----------------
+# -------------------- Tab 4: Browse Donations --------------------
 
 with tab_browse:
     st.markdown("## ♻️ Browse Community Donations")
@@ -845,8 +881,7 @@ with tab_manage:
         listing = get_item(st.session_state.managed_listing_id)
         if listing:
             st.markdown(f"### {safe_text(listing['item_name'])}")
-            with db_connect() as conn:
-                requests = conn.execute("SELECT * FROM requests WHERE item_id = ? ORDER BY created_at DESC", (listing["id"],)).fetchall()
+            requests = get_requests_for_item(listing["id"])
             for req in requests:
                 with st.container(border=True):
                     st.markdown(f"**Request from {safe_text(req['requester_name'])}** ({req['status']})")
