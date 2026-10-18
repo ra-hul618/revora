@@ -91,6 +91,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**✨ What You Can Do Here**")
     st.write("🌿 **Explore** 42+ product lifecycles")
+    st.write("📌 **Wish Board** (Post & fulfill needs)")
     st.write("🕸️ **Compare** products on Radar Charts")
     st.write("📸 **Scan** item condition with AI")
     st.write("🎙️ **Ask** via Voice Search & Read Aloud")
@@ -116,7 +117,7 @@ with st.sidebar:
         WEIGHTS = DEFAULT_WEIGHTS.copy()
 
     st.markdown("---")
-    st.caption("Demo EcoScores are heuristic estimates, not certified lifecycle assessments.")
+    st.caption("Demo EcoScores are heuristic estimates, not verified lifecycle assessments.")
     st.caption("Arrange handovers in safe, public places.")
 
 # -------------------- Dynamic Theme CSS --------------------
@@ -295,12 +296,73 @@ def load_data():
                 return df, "Loaded custom products.csv."
     except Exception:
         pass
-    
-    # Fallback to embedded errorless dataset
     df = pd.read_csv(io.StringIO(_FALLBACK_PRODUCTS_CSV))
     return df, "Loaded built-in errorless dataset (42 products)."
 
 df, data_load_notice = load_data()
+
+# -------------------- Marketplace database setup --------------------
+
+def db_connect():
+    conn = sqlite3.connect(DB_PATH, timeout=20, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+def init_db():
+    with db_connect() as conn:
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            item_condition TEXT NOT NULL,
+            location TEXT NOT NULL,
+            description TEXT NOT NULL,
+            donor_name TEXT NOT NULL,
+            donor_contact TEXT NOT NULL,
+            contact_type TEXT NOT NULL,
+            pin_hash TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Available',
+            created_at TEXT NOT NULL
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL,
+            requester_name TEXT NOT NULL,
+            requester_contact TEXT NOT NULL,
+            message TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Pending',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(item_id) REFERENCES items(id)
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS wishes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wish_name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            location TEXT NOT NULL,
+            description TEXT NOT NULL,
+            requester_name TEXT NOT NULL,
+            requester_contact TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Active',
+            created_at TEXT NOT NULL
+        )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_items_status ON items(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_wishes_status ON wishes(status)")
+
+def hash_pin(pin): return hashlib.sha256(pin.encode("utf-8")).hexdigest()
+def now_iso(): return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def safe_text(value): return html.escape(str(value or ""))
+
+init_db()
+
+def score_product(row):
+    return round(sum(float(row[col]) * weight for col, weight in WEIGHTS.items()), 1)
 
 def score_bar_color(score):
     if score >= 70: return "linear-gradient(90deg, #1b6741, #48b578)"
@@ -344,13 +406,9 @@ def build_svg_radar(primary_row, compare_row=None, is_dark=False):
 
     p1_pts = " ".join(f"{pt(i, primary_row[k])[0]:.1f},{pt(i, primary_row[k])[1]:.1f}" for i, (k, _) in enumerate(axes))
     poly1_svg = f'<polygon points="{p1_pts}" fill="rgba(46, 139, 87, 0.34)" stroke="#2e8b57" stroke-width="2.6"/>'
-    dots1_svg = "".join(
-        f'<circle cx="{pt(i, primary_row[k])[0]:.1f}" cy="{pt(i, primary_row[k])[1]:.1f}" r="4" fill="#2e8b57"/>'
-        for i, (k, _) in enumerate(axes)
-    )
+    dots1_svg = "".join(f'<circle cx="{pt(i, primary_row[k])[0]:.1f}" cy="{pt(i, primary_row[k])[1]:.1f}" r="4" fill="#2e8b57"/>' for i, (k, _) in enumerate(axes))
 
-    poly2_svg = ""
-    legend_2 = ""
+    poly2_svg, legend_2 = "", ""
     if compare_row is not None:
         p2_pts = " ".join(f"{pt(i, compare_row[k])[0]:.1f},{pt(i, compare_row[k])[1]:.1f}" for i, (k, _) in enumerate(axes))
         poly2_svg = f'<polygon points="{p2_pts}" fill="rgba(240, 180, 41, 0.22)" stroke="#e09f1f" stroke-width="2.2" stroke-dasharray="5,3"/>'
@@ -364,161 +422,45 @@ def build_svg_radar(primary_row, compare_row=None, is_dark=False):
         <svg viewBox="0 0 370 325" style="width:100%;max-width:360px;height:auto;">
             {rings_svg} {spokes_svg} {poly2_svg} {poly1_svg} {dots1_svg} {labels_svg}
         </svg>
-        <div style="display:flex;justify-content:center;gap:16px;flex-wrap:wrap;margin-top:4px;">
-            {legend_1} {legend_2}
-        </div>
+        <div style="display:flex;justify-content:center;gap:16px;flex-wrap:wrap;margin-top:4px;">{legend_1} {legend_2}</div>
     </div>
     """
 
-# -------------------- Marketplace database --------------------
+# -------------------- Hero Banner & Live Impact Counter --------------------
 
-def db_connect():
-    conn = sqlite3.connect(DB_PATH, timeout=20, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+with db_connect() as conn:
+    donated_count = conn.execute("SELECT COUNT(*) AS n FROM items WHERE status='Donated'").fetchone()["n"]
+    available_count = conn.execute("SELECT COUNT(*) AS n FROM items WHERE status='Available'").fetchone()["n"]
+    wishes_count = conn.execute("SELECT COUNT(*) AS n FROM wishes WHERE status='Active'").fetchone()["n"]
 
-def init_db():
-    with db_connect() as conn:
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_name TEXT NOT NULL,
-            category TEXT NOT NULL,
-            item_condition TEXT NOT NULL,
-            location TEXT NOT NULL,
-            description TEXT NOT NULL,
-            donor_name TEXT NOT NULL,
-            donor_contact TEXT NOT NULL,
-            contact_type TEXT NOT NULL,
-            pin_hash TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Available',
-            created_at TEXT NOT NULL
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_id INTEGER NOT NULL,
-            requester_name TEXT NOT NULL,
-            requester_contact TEXT NOT NULL,
-            message TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Pending',
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(item_id) REFERENCES items(id)
-        )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_items_status ON items(status)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_requests_item_id ON requests(item_id)")
+# Heuristic impact estimates (Avg 1.5kg waste diverted & 4.2kg CO2 saved per rehomed item)
+total_waste_diverted_kg = donated_count * 1.5
+total_co2_saved_kg = donated_count * 4.2
 
-def hash_pin(pin): return hashlib.sha256(pin.encode("utf-8")).hexdigest()
-def now_iso(): return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-def get_items(status=None, category=None, search_text=None):
-    sql = "SELECT * FROM items"
-    clauses, params = [], []
-    if status and status != "All":
-        clauses.append("status = ?"); params.append(status)
-    if category and category != "All categories":
-        clauses.append("category = ?"); params.append(category)
-    if search_text:
-        clauses.append("(lower(item_name) LIKE ? OR lower(description) LIKE ? OR lower(location) LIKE ?)")
-        term = f"%{search_text.lower()}%"
-        params.extend([term, term, term])
-    if clauses: sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY created_at DESC"
-    with db_connect() as conn:
-        return conn.execute(sql, params).fetchall()
-
-def get_item(item_id):
-    with db_connect() as conn:
-        return conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
-
-def get_requests_for_item(item_id):
-    with db_connect() as conn:
-        return conn.execute("SELECT * FROM requests WHERE item_id = ? ORDER BY created_at DESC", (item_id,)).fetchall()
-
-def get_request_for_tracking(request_id, requester_contact):
-    with db_connect() as conn:
-        return conn.execute(
-            """SELECT r.*, i.item_name, i.status AS item_status, i.donor_contact, i.contact_type, i.location
-               FROM requests r JOIN items i ON i.id = r.item_id
-               WHERE r.id = ? AND lower(r.requester_contact) = lower(?)""",
-            (request_id, requester_contact.strip())
-        ).fetchone()
-
-def item_request_count(item_id):
-    with db_connect() as conn:
-        row = conn.execute("SELECT COUNT(*) AS n FROM requests WHERE item_id = ?", (item_id,)).fetchone()
-        return int(row["n"])
-
-def safe_text(value): return html.escape(str(value or ""))
-
-init_db()
-
-def score_product(row):
-    return round(sum(float(row[col]) * weight for col, weight in WEIGHTS.items()), 1)
-
-def intervention_for(problem, product_name):
-    rules = {
-        "Breaks before the rest wears out": ("Prioritize a repairable or modular design", "Look for replaceable parts, accessible fasteners, spare-part availability, and a repair guide."),
-        "Too much product is dispensed or used": ("Choose controlled-dose or refillable packaging", "A measured dispenser, adjustable opening, or refill pack may reduce overuse."),
-        "Packaging is excessive": ("Prefer right-sized, concentrated, or refill packaging", "Compare packaging per use—not just package size."),
-        "Product is rarely used": ("Borrow, share, or keep using what you own", "Test whether sharing or renting solves the need without a new product."),
-        "Single-use waste builds up": ("Switch to a durable alternative if reuse is frequent", "Compare expected lifetime uses and cleaning needs."),
-        "Hard to recycle or dispose of": ("Choose simpler materials and a known take-back route", "Prefer clearly labelled materials and check local collection rules."),
-    }
-    return rules[problem]
-
-def generate_recommendation(problem, category, current_row, candidates):
-    title, explanation = intervention_for(problem, current_row["product_name"])
-    if problem == "Product is rarely used":
-        candidates = candidates[candidates["category"] == category]
-        return title, explanation, candidates.sort_values("eco_score", ascending=False).head(3)
-    same_category = candidates[candidates["category"] == category].copy()
-    if same_category.empty: same_category = candidates.copy()
-    current_score = float(current_row["eco_score"])
-    same_category = same_category[same_category["product_name"] != current_row["product_name"]]
-    same_category["score_gain"] = same_category["eco_score"] - current_score
-    same_category = same_category.sort_values(["eco_score", "score_gain"], ascending=False)
-    return title, explanation, same_category.head(3)
-
-# -------------------- Hero Banner --------------------
-
-st.markdown("""
+st.markdown(f"""
 <div class="hero">
   <span class="pill" style="background:rgba(224,245,189,0.22);color:#e6f9d5;border:1px solid rgba(224,245,189,0.4);">
-    🌱 WASTE-TO-DESIGN INTELLIGENCE & COMMUNITY MARKETPLACE
+    🌱 WASTE-TO-DESIGN INTELLIGENCE & COMMUNITY REUSE MARKETPLACE
   </span>
   <h1>REVORA</h1>
   <p>Rethink materials. Reuse what works. Revive everyday objects before they become waste.</p>
   <div class="hero-badges">
-    <span class="hero-badge">🌿 42+ Products Catalog</span>
-    <span class="hero-badge">📸 AI Object Condition Scanner</span>
-    <span class="hero-badge">🎙️ Voice Search & Read Aloud</span>
-    <span class="hero-badge">🔒 PIN-Protected Community Reuse</span>
+    <span class="hero-badge">📊 Impact: <b>{total_waste_diverted_kg:.1f} kg</b> Waste Diverted</span>
+    <span class="hero-badge">🌍 Impact: <b>{total_co2_saved_kg:.1f} kg</b> CO₂ Saved</span>
+    <span class="hero-badge">🎁 <b>{available_count}</b> Available Items</span>
+    <span class="hero-badge">📌 <b>{wishes_count}</b> Active Community Wishes</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-tab_explore, tab_ai, tab_browse, tab_donate, tab_manage, tab_track = st.tabs([
-    "🌿 Product Explorer", "🤖 REVORA AI Chat", "🔎 Browse Donations", "🎁 Donate an Item", "📬 Manage Requests", "📦 Track My Request"
+tab_explore, tab_wish, tab_ai, tab_browse, tab_donate, tab_manage, tab_track = st.tabs([
+    "🌿 Product Explorer", "📌 Wish Board", "🤖 REVORA AI Chat", "🔎 Browse Donations", "🎁 Donate an Item", "📬 Manage Requests", "📦 Track My Request"
 ])
 
-# -------------------- Product Explorer Tab --------------------
+# -------------------- Tab 1: Product Explorer --------------------
 
 with tab_explore:
     st.markdown("## 🌿 Explore the Product Lifecycle")
-    with db_connect() as conn:
-        total_available = conn.execute("SELECT COUNT(*) AS n FROM items WHERE status='Available'").fetchone()["n"]
-        total_donated = conn.execute("SELECT COUNT(*) AS n FROM items WHERE status='Donated'").fetchone()["n"]
-
-    m1, m2, m3, m4 = st.columns(4)
-    with m1: st.metric("Products in Catalog", len(df))
-    with m2: st.metric("Product Categories", df["category"].nunique())
-    with m3: st.metric("Available Donations", int(total_available))
-    with m4: st.metric("Items Rehomed", int(total_donated))
-
     filter_col1, filter_col2, filter_col3 = st.columns([1, 1, 1])
     with filter_col1:
         categories = ["All categories"] + sorted(df["category"].unique().tolist())
@@ -535,12 +477,10 @@ with tab_explore:
 
     search = st.text_input("🔎 Search products by keyword or material", placeholder="Try: bottle, notebook, cable, cleaner, denim...", key="product_search")
     filtered = df.copy()
-    if selected_category != "All categories":
-        filtered = filtered[filtered["category"] == selected_category]
-    if search.strip():
-        filtered = filtered[filtered.apply(lambda r: search.lower() in " ".join(map(str, r.values)).lower(), axis=1)]
+    if selected_category != "All categories": filtered = filtered[filtered["category"] == selected_category]
+    if search.strip(): filtered = filtered[filtered.apply(lambda r: search.lower() in " ".join(map(str, r.values)).lower(), axis=1)]
     filtered["eco_score"] = filtered.apply(score_product, axis=1)
-    
+
     if priority == "Longer lifespan": filtered["rank_score"] = filtered["lifecycle_score"]
     elif priority == "Less packaging": filtered["rank_score"] = filtered["packaging_score"]
     elif priority == "Repairability": filtered["rank_score"] = filtered["end_of_life_score"]
@@ -583,10 +523,33 @@ with tab_explore:
             chosen["eco_score"] = score_product(chosen)
             candidates = df.copy()
             candidates["eco_score"] = candidates.apply(score_product, axis=1)
-            heading, details, recs = generate_recommendation(problem, chosen["category"], chosen, candidates)
+
+            def intervention_for(prob, name):
+                rules = {
+                    "Breaks before the rest wears out": ("Prioritize a repairable or modular design", "Look for replaceable parts, accessible fasteners, and repair guides."),
+                    "Too much product is dispensed or used": ("Choose controlled-dose or refillable packaging", "A measured dispenser or refill pack reduces overuse."),
+                    "Packaging is excessive": ("Prefer right-sized, concentrated, or refill packaging", "Compare packaging per use—not just package size."),
+                    "Product is rarely used": ("Borrow, share, or keep using what you own", "Test whether sharing or renting solves the need without a new product."),
+                    "Single-use waste builds up": ("Switch to a durable alternative if reuse is frequent", "Compare expected lifetime uses and cleaning needs."),
+                    "Hard to recycle or dispose of": ("Choose simpler materials and a known take-back route", "Prefer clearly labelled materials and check local collection rules."),
+                }
+                return rules[prob]
+
+            def generate_rec(prob, cat, curr, cands):
+                t, expl = intervention_for(prob, curr["product_name"])
+                if prob == "Product is rarely used":
+                    cands = cands[cands["category"] == cat]
+                    return t, expl, cands.sort_values("eco_score", ascending=False).head(3)
+                sc = cands[cands["category"] == cat].copy()
+                if sc.empty: sc = cands.copy()
+                sc = sc[sc["product_name"] != curr["product_name"]]
+                sc["score_gain"] = sc["eco_score"] - float(curr["eco_score"])
+                return t, expl, sc.sort_values(["eco_score", "score_gain"], ascending=False).head(3)
+
+            title, explanation, recs = generate_rec(problem, chosen["category"], chosen, candidates)
 
             st.markdown("---")
-            st.markdown("## 🔬 Your Waste-to-Design Analysis & Radar Comparison")
+            st.markdown("## 🔬 Waste-to-Design Analysis & Radar Comparison")
             st.markdown(f"### {CATEGORY_ICONS.get(chosen['category'], '🌱')} {chosen['product_name']}")
 
             info_col, radar_col = st.columns([1.35, 1])
@@ -601,7 +564,6 @@ with tab_explore:
                     <b>⚖️ Key Trade-off:</b> {safe_text(chosen['tradeoff'])}
                 </div>
                 """, unsafe_allow_html=True)
-                title, explanation = intervention_for(problem, chosen["product_name"])
                 st.success(f"**Suggested Design Intervention: {title}** — {explanation}")
 
             with radar_col:
@@ -611,32 +573,58 @@ with tab_explore:
                 comp_row = df[df["product_name"] == comp_name].iloc[0]
                 st.markdown(build_svg_radar(chosen, comp_row, is_dark=dark_mode), unsafe_allow_html=True)
 
-            st.markdown("### 📊 Lifecycle Score Breakdown")
-            score_cols = st.columns(5)
-            for col, key in zip(score_cols, WEIGHTS.keys()):
-                with col: st.metric(DISPLAY_NAMES[key], f"{chosen[key]:.0f}/100")
-            st.progress(min(1.0, max(0.0, chosen["eco_score"] / 100)))
+# -------------------- Tab 2: Community Wish Board --------------------
 
-            st.markdown("### 🔄 Better-Scoring Alternatives in This Category")
-            if recs.empty:
-                st.info("No alternative in this sample dataset.")
+with tab_wish:
+    st.markdown("## 📌 Community Wish Board (Reverse Marketplace)")
+    st.write("Looking for a specific item (like textbooks, calculators, or tools)? Post your wish below so community donors can see and fulfill it.")
+    
+    wish_mode = st.radio("Wish Board Actions", ["Browse Wishes", "Post a New Wish"], horizontal=True, key="wish_board_mode")
+    
+    if wish_mode == "Post a New Wish":
+        with st.form("post_wish_form", clear_on_submit=True):
+            w1, w2 = st.columns(2)
+            with w1:
+                wish_name = st.text_input("What are you looking for? *", placeholder="e.g. Scientific Calculator or 1st Year Engineering Books", max_chars=100)
+                wish_cat = st.selectbox("Category *", ["Books & education", "Electronics", "Clothing & shoes", "Home & kitchen", "Toys & games", "Sports & outdoors", "Other"])
+                wish_loc = st.text_input("Your Area / City *", placeholder="e.g. Indiranagar, Bengaluru", max_chars=120)
+            with w2:
+                req_name = st.text_input("Your Name *", max_chars=80)
+                req_contact = st.text_input("Your Email or Phone *", placeholder="Shown to donors who want to fulfill your wish", max_chars=120)
+            wish_desc = st.text_area("Details / Specifications *", placeholder="Mention model, edition, condition required, or urgency...", max_chars=500)
+            submit_wish = st.form_submit_button("📌 Publish Wish", use_container_width=True)
+            
+        if submit_wish:
+            if not all([wish_name.strip(), wish_loc.strip(), req_name.strip(), req_contact.strip(), wish_desc.strip()]):
+                st.error("Please fill in all required fields.")
             else:
-                rec_cols = st.columns(min(3, len(recs)))
-                for col, (_, rec) in zip(rec_cols, recs.iterrows()):
-                    gain = rec["eco_score"] - chosen["eco_score"]
-                    gain_str = f"+{gain:.0f} pts" if gain > 0 else f"{gain:.0f} pts"
-                    with col:
-                        st.markdown(f"""
-                        <div class="result-card">
-                          <div style="display:flex;justify-content:space-between;"><span class="muted">{safe_text(rec['category'])}</span><span class="pill">{gain_str}</span></div>
-                          <h4 style="margin:.4rem 0">{safe_text(rec['product_name'])}</h4>
-                          <div class="big-score">{rec['eco_score']:.0f}<span style="font-size:.8rem;" class="muted"> / 100</span></div>
-                          <p>{safe_text(rec['description'])}</p>
-                          <p style="font-size:.88rem;"><b>Trade-off:</b> {safe_text(rec['tradeoff'])}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                with db_connect() as conn:
+                    conn.execute(
+                        "INSERT INTO wishes (wish_name, category, location, description, requester_name, requester_contact, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'Active', ?)",
+                        (wish_name.strip(), wish_cat, wish_loc.strip(), wish_desc.strip(), req_name.strip(), req_contact.strip(), now_iso())
+                    )
+                st.success("Your wish has been posted to the community Wish Board!")
+    else:
+        with db_connect() as conn:
+            active_wishes = conn.execute("SELECT * FROM wishes WHERE status='Active' ORDER BY created_at DESC").fetchall()
+        
+        if not active_wishes:
+            st.info("No active wishes right now. Be the first to post what you're looking for!")
+        else:
+            st.caption(f"{len(active_wishes)} active community wish(es)")
+            for wish in active_wishes:
+                icon = CATEGORY_ICONS.get(wish["category"], "📌")
+                with st.container(border=True):
+                    st.markdown(f"""
+                    <div class="result-card" style="margin-bottom:0;">
+                        <span class="pill">{icon} {safe_text(wish['category'])}</span> &nbsp;<span class="muted">· Posted by <b>{safe_text(wish['requester_name'])}</b></span>
+                        <h3 style="margin:.45rem 0">{safe_text(wish['wish_name'])}</h3>
+                        <p>{safe_text(wish['description'])}</p>
+                        <div class="muted">📍 {safe_text(wish['location'])} · Contact: <b>{safe_text(wish['requester_contact'])}</b> · {wish['created_at'][:10]}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-# -------------------- Gemini AI chatbox, Object Scanner & Voice Search --------------------
+# -------------------- Tab 3: REVORA AI Chat & Object Scanner --------------------
 
 def get_gemini_client():
     try: api_key = st.secrets["GEMINI_API_KEY"]
@@ -767,7 +755,7 @@ with tab_ai:
             st.session_state.revora_chat_history.append({"role": "assistant", "content": answer})
         except Exception as e: st.error(f"Error connecting to Gemini: {e}")
 
-# -------------------- Browse Donations Tab --------------------
+# -------------------- Tab 4: Browse Donations ----------------
 
 with tab_browse:
     st.markdown("## ♻️ Browse Community Donations")
@@ -803,7 +791,7 @@ with tab_browse:
                                 cursor = conn.execute("INSERT INTO requests (item_id, requester_name, requester_contact, message, status, created_at) VALUES (?, ?, ?, ?, 'Pending', ?)", (item["id"], req_name.strip(), req_contact.strip(), req_message.strip(), now_iso()))
                                 st.success(f"Request sent! ID: REV-R{cursor.lastrowid:05d}")
 
-# -------------------- Donate an Item Tab --------------------
+# -------------------- Tab 5: Donate an Item --------------------
 
 with tab_donate:
     st.markdown("## 🎁 Give a Useful Item a Second Life")
@@ -836,7 +824,7 @@ with tab_donate:
                 new_id = cursor.lastrowid
             st.success(f"Listed successfully! Listing ID: **REV-{new_id:05d}**. Save your PIN to manage requests.")
 
-# -------------------- Manage Requests Tab --------------------
+# -------------------- Tab 6: Manage Requests --------------------
 
 with tab_manage:
     st.markdown("## 📬 Manage Your Donation Requests")
@@ -857,7 +845,8 @@ with tab_manage:
         listing = get_item(st.session_state.managed_listing_id)
         if listing:
             st.markdown(f"### {safe_text(listing['item_name'])}")
-            requests = get_requests_for_item(listing["id"])
+            with db_connect() as conn:
+                requests = conn.execute("SELECT * FROM requests WHERE item_id = ? ORDER BY created_at DESC", (listing["id"],)).fetchall()
             for req in requests:
                 with st.container(border=True):
                     st.markdown(f"**Request from {safe_text(req['requester_name'])}** ({req['status']})")
@@ -875,7 +864,14 @@ with tab_manage:
                                 with db_connect() as conn: conn.execute("UPDATE requests SET status='Declined' WHERE id=?", (req["id"],))
                                 st.rerun()
 
-# -------------------- Track Request Tab --------------------
+            if listing["status"] == "Reserved":
+                if st.button("Mark as Donated / Completed", key=f"complete_{listing['id']}"):
+                    with db_connect() as conn:
+                        conn.execute("UPDATE items SET status='Donated' WHERE id=?", (listing["id"],))
+                    st.success("Marked as donated! Impact metrics updated.")
+                    st.rerun()
+
+# -------------------- Tab 7: Track Request --------------------
 
 with tab_track:
     st.markdown("## 📦 Track Your Request")
