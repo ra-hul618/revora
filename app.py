@@ -9,6 +9,7 @@ import html
 import io
 import json
 import math
+import re
 from datetime import datetime, timezone
 
 st.set_page_config(
@@ -53,6 +54,66 @@ BREAKEVEN_PROFILES = {
     "Clothing": (35, 220, 60),
     "Food containers": (22, 75, 22),
     "Household": (16, 110, 28),
+}
+
+# Plastic Resin & Packaging Symbol Decoder Data
+RESIN_DECODER_DATA = {
+    "♳ #1 PET / PETE (Polyethylene Terephthalate)": {
+        "common_uses": "Disposable water bottles, soda bottles, clear condiment jars",
+        "recyclability": "High (~55–70% municipal acceptance when clean and clear)",
+        "risk": "Antimony & microplastic shedding when exposed to heat or repeated refilling",
+        "verdict": "✅ Widely Recyclable (Single-Use Only)",
+        "swap": "Food-grade 304 stainless steel or borosilicate glass bottle",
+    },
+    "♴ #2 HDPE (High-Density Polyethylene)": {
+        "common_uses": "Shampoo bottles, detergent jugs, milk containers,cleaning triggers",
+        "recyclability": "High (~60%+ acceptance in rigid container streams)",
+        "risk": "Low leaching risk, but triggers/pumps contain mixed metal springs that jam recyclers",
+        "verdict": "✅ Widely Recyclable",
+        "swap": "Refillable glass/HDPE bottle using concentrated refill tablets or pouches",
+    },
+    "♵ #3 PVC / V (Polyvinyl Chloride)": {
+        "common_uses": "Blister packs, cable insulation, synthetic leather, plumbing pipes",
+        "recyclability": "Very Low (<3% recycled; contaminates PET/HDPE batches)",
+        "risk": "Contains phthalates and releases toxic dioxins if incinerated",
+        "verdict": "⚠️ Rarely Recyclable — Avoid Packaging",
+        "swap": "Cardboard-only packaging, braided fabric cables, and natural canvas",
+    },
+    "♶ #4 LDPE (Low-Density Polyethylene)": {
+        "common_uses": "Single-use shopping bags, bubble mailers, shrink wrap, squeezable tubes",
+        "recyclability": "Low (~10%; flexible films tangle municipal sorting machinery)",
+        "risk": "Fragments into persistent film microplastics in waterways",
+        "verdict": "⚠️ Curbside Reject (Store Drop-Off Only)",
+        "swap": "Washable organic cotton tote bags and all-paper honeycomb mailers",
+    },
+    "♷ #5 PP (Polypropylene)": {
+        "common_uses": "Takeaway food containers, bottle caps, yogurt tubs, plastic straws",
+        "recyclability": "Moderate (~30–40%; dark/black PP is often missed by optical sorters)",
+        "risk": "Degrades and sheds microplastics when microwaved with oily foods",
+        "verdict": "⚖️ Check Local Rules (Never Microwave)",
+        "swap": "Stainless steel tiffin boxes or glass snap-lock meal containers",
+    },
+    "♸ #6 PS (Polystyrene / Styrofoam)": {
+        "common_uses": "Disposable foam plates, coffee cup lids, protective foam blocks",
+        "recyclability": "Extremely Low (<1% economically recovered)",
+        "risk": "Styrene monomer leaching with hot liquids; breaks into wind-blown foam beads",
+        "verdict": "🚫 Not Recyclable in Standard Streams",
+        "swap": "Reusable stainless tumbler, ceramic tableware, or moulded pulp packaging",
+    },
+    "♹ #7 OTHER (PC, Bio-Plastics, Multi-Layer)": {
+        "common_uses": "Snack pouches, bamboo-melamine composites, PLA cups, polycarbonate",
+        "recyclability": "Virtually Zero in standard curbside bins",
+        "risk": "PLA requires industrial composting (60°C+); multi-layer films cannot be separated",
+        "verdict": "🚫 Landfill Bound Unless Industrially Certified",
+        "swap": "Mono-material glass, metal, or home-compostable uncoated plant fiber",
+    },
+    "🗑️⚡ WEEE (Crossed-Out Wheeled Bin — E-Waste)": {
+        "common_uses": "LED bulbs, charging cables, batteries, headphones, circuit boards",
+        "recyclability": "High metal recovery ONLY at certified e-waste drop-off centers",
+        "risk": "Lead, lithium, and mercury contaminate soil/groundwater and cause landfill fires",
+        "verdict": "🔋 Mandatory E-Waste Hub Drop-Off",
+        "swap": "Modular repairable electronics and rechargeable NiMH/Li-ion cells",
+    },
 }
 
 # One-time branded splash screen for the first page load in this browser session.
@@ -113,9 +174,18 @@ def init_db():
             contact_type TEXT NOT NULL,
             pin_hash TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'Available',
+            listing_mode TEXT NOT NULL DEFAULT 'Permanent Donation',
+            loan_days INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         )
         """)
+        # Safe schema migration for existing databases
+        existing_cols = [r["name"] for r in conn.execute("PRAGMA table_info(items)").fetchall()]
+        if "listing_mode" not in existing_cols:
+            conn.execute("ALTER TABLE items ADD COLUMN listing_mode TEXT NOT NULL DEFAULT 'Permanent Donation'")
+        if "loan_days" not in existing_cols:
+            conn.execute("ALTER TABLE items ADD COLUMN loan_days INTEGER NOT NULL DEFAULT 0")
+
         conn.execute("""
         CREATE TABLE IF NOT EXISTS requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,7 +226,6 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_items_status ON items(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_wishes_status ON wishes(status)")
 
-        # Seed default Local Repair & E-Waste hubs if empty
         existing_hubs = conn.execute("SELECT COUNT(*) AS n FROM repair_hubs").fetchone()["n"]
         if existing_hubs == 0:
             default_hubs = [
@@ -174,13 +243,15 @@ def init_db():
 
 init_db()
 
-def get_items(status=None, category=None, search_text=None):
+def get_items(status=None, category=None, search_text=None, listing_mode=None):
     sql = "SELECT * FROM items"
     clauses, params = [], []
     if status and status != "All":
         clauses.append("status = ?"); params.append(status)
     if category and category != "All categories":
         clauses.append("category = ?"); params.append(category)
+    if listing_mode and listing_mode != "All Modes":
+        clauses.append("listing_mode = ?"); params.append(listing_mode)
     if search_text:
         clauses.append("(lower(item_name) LIKE ? OR lower(description) LIKE ? OR lower(location) LIKE ?)")
         term = f"%{search_text.lower()}%"
@@ -202,11 +273,47 @@ def get_requests_for_item(item_id):
 def get_request_for_tracking(request_id, requester_contact):
     with db_connect() as conn:
         return conn.execute(
-            """SELECT r.*, i.item_name, i.status AS item_status, i.donor_name, i.donor_contact, i.contact_type, i.location
+            """SELECT r.*, i.item_name, i.status AS item_status, i.donor_name, i.donor_contact, i.contact_type, i.location, i.listing_mode, i.loan_days
                FROM requests r JOIN items i ON i.id = r.item_id
                WHERE r.id = ? AND lower(r.requester_contact) = lower(?)""",
             (request_id, requester_contact.strip())
         ).fetchone()
+
+def find_wish_matches_for_item(item_name, item_category, item_desc=""):
+    """Cross-references an item against active Community Wish Board posts."""
+    with db_connect() as conn:
+        wishes = conn.execute("SELECT * FROM wishes WHERE status='Active' ORDER BY created_at DESC").fetchall()
+    tokens = {
+        w for w in re.findall(r"[a-z0-9]+", f"{item_name} {item_desc}".lower())
+        if len(w) >= 3 and w not in {"the", "and", "for", "with", "good", "used", "new", "item", "need", "want", "looking"}
+    }
+    matches = []
+    for w in wishes:
+        wish_tokens = set(re.findall(r"[a-z0-9]+", f"{w['wish_name']} {w['description']}".lower()))
+        overlap = tokens.intersection(wish_tokens)
+        cat_match = (w["category"] == item_category)
+        if overlap or cat_match:
+            score = len(overlap) * 35 + (25 if cat_match else 0)
+            if score >= 25:
+                matches.append((min(98, score), w, sorted(overlap)))
+    matches.sort(key=lambda x: x[0], reverse=True)
+    return matches[:4]
+
+def compute_all_wish_item_matches():
+    """Finds all live pairs between active wishes and available marketplace items."""
+    avail_items = get_items(status="Available")
+    pairs = []
+    for it in avail_items:
+        m_list = find_wish_matches_for_item(it["item_name"], it["category"], it["description"])
+        for score, w, overlap in m_list:
+            pairs.append({
+                "score": score,
+                "item": it,
+                "wish": w,
+                "keywords": overlap,
+            })
+    pairs.sort(key=lambda x: x["score"], reverse=True)
+    return pairs[:6]
 
 def get_donor_badge(donated_count, listed_count):
     if donated_count >= 10:
@@ -224,15 +331,72 @@ def get_donor_leaderboard():
         rows = conn.execute("""
             SELECT donor_name,
                    COUNT(*) AS listed_count,
-                   SUM(CASE WHEN status = 'Donated' THEN 1 ELSE 0 END) AS donated_count
+                   SUM(CASE WHEN status = 'Donated' THEN 1 ELSE 0 END) AS donated_count,
+                   SUM(CASE WHEN listing_mode = 'Peer Lending (Borrow & Return)' THEN 1 ELSE 0 END) AS loan_count
             FROM items
             GROUP BY lower(donor_name)
             ORDER BY donated_count DESC, listed_count DESC
-            LIMIT 10
+            LIMIT 12
         """).fetchall()
     return rows
 
-def build_svg_handover_pass(item_id, request_id, item_name, location_text, status_text):
+def build_impact_certificate_html(person_name, rehomed_cnt, listed_cnt, loan_cnt):
+    """Generates a printable HTML/SVG Certificate of Circular Impact."""
+    badge_title, _, _ = get_donor_badge(rehomed_cnt, listed_cnt)
+    effective_actions = max(1, rehomed_cnt + loan_cnt) if (rehomed_cnt + listed_cnt + loan_cnt) > 0 else 1
+    waste_kg = round(effective_actions * 1.5, 1)
+    co2_kg = round(effective_actions * 4.2, 1)
+    cert_hash = hashlib.sha256(f"REVORA-CERT-{person_name}-{rehomed_cnt}-{listed_cnt}".encode("utf-8")).hexdigest()[:10].upper()
+    date_str = datetime.now().strftime("%d %B %Y")
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>REVORA Certificate of Circular Impact - {safe_text(person_name)}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap');
+  body {{ font-family: 'Plus Jakarta Sans', sans-serif; background: #f4f8f4; margin: 0; padding: 24px; display: flex; justify-content: center; }}
+  .cert {{ max-width: 760px; width: 100%; background: #ffffff; border: 8px double #1b6741; border-radius: 22px; padding: 36px 42px; box-sizing: border-box; text-align: center; box-shadow: 0 16px 40px rgba(16,42,29,0.12); position: relative; }}
+  .eyebrow {{ color: #2e7a53; font-weight: 700; letter-spacing: 3px; font-size: 12px; text-transform: uppercase; }}
+  h1 {{ font-family: 'Outfit', sans-serif; color: #102a1d; font-size: 32px; margin: 8px 0 4px; }}
+  .sub {{ color: #5b6d61; font-size: 14px; margin-bottom: 20px; }}
+  .recipient {{ font-family: 'Outfit', sans-serif; font-size: 28px; font-weight: 800; color: #1b6741; border-bottom: 2px solid #cce3d4; display: inline-block; padding: 4px 28px; margin: 8px 0 16px; }}
+  .badge-pill {{ display: inline-block; background: #dcecdf; color: #13462b; padding: 6px 16px; border-radius: 999px; font-weight: 700; font-size: 14px; margin-bottom: 18px; }}
+  .metrics {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 18px 0 24px; }}
+  .m-box {{ background: #f4f8f4; border: 1px solid #d5e4d4; border-radius: 14px; padding: 12px 8px; }}
+  .m-val {{ font-family: 'Outfit', sans-serif; font-size: 22px; font-weight: 800; color: #1b6741; }}
+  .m-lbl {{ font-size: 11px; color: #5b6d61; font-weight: 600; margin-top: 2px; }}
+  .footer {{ display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #e2ece2; padding-top: 14px; font-size: 12px; color: #5b6d61; margin-top: 12px; }}
+  @media print {{ body {{ background: #fff; padding: 0; }} .no-print {{ display: none; }} }}
+</style>
+</head>
+<body>
+  <div class="cert">
+    <div class="eyebrow">🌱 REVORA · WASTE-TO-DESIGN & COMMUNITY REUSE</div>
+    <h1>Certificate of Circular Impact</h1>
+    <div class="sub">Proudly presented for advancing neighborhood resource circularity and landfill diversion</div>
+    <div class="recipient">{safe_text(person_name)}</div><br/>
+    <div class="badge-pill">Earned Rank: {safe_text(badge_title)}</div>
+    <p style="color:#2c4235;font-size:14px;max-width:580px;margin:0 auto 14px;line-height:1.5;">
+      In recognition of active participation in the REVORA Circular Reuse Ecosystem—extending product lifecycles, sharing tools, and keeping valuable materials in community circulation.
+    </p>
+    <div class="metrics">
+      <div class="m-box"><div class="m-val">{rehomed_cnt}</div><div class="m-lbl">Items Rehomed</div></div>
+      <div class="m-box"><div class="m-val">{listed_cnt + loan_cnt}</div><div class="m-lbl">Listings & Loans</div></div>
+      <div class="m-box"><div class="m-val">{waste_kg} kg</div><div class="m-lbl">Waste Diverted</div></div>
+      <div class="m-box"><div class="m-val">{co2_kg} kg</div><div class="m-lbl">CO₂ Prevented</div></div>
+    </div>
+    <div class="footer">
+      <span>📅 Issued: <b>{date_str}</b></span>
+      <span>🔒 Verification ID: <b>REV-CERT-{cert_hash}</b></span>
+      <span>🌍 <b>REVORA Platform</b></span>
+    </div>
+  </div>
+</body>
+</html>"""
+
+def build_svg_handover_pass(item_id, request_id, item_name, location_text, status_text, listing_mode="Permanent Donation", loan_days=0):
     """Generates a deterministic SVG QR-style verification matrix pass with zero external dependencies."""
     seed_str = f"REVORA-{item_id}-{request_id}-{item_name}"
     digest = hashlib.sha256(seed_str.encode("utf-8")).hexdigest().upper()
@@ -245,7 +409,6 @@ def build_svg_handover_pass(item_id, request_id, item_name, location_text, statu
     bit_idx = 0
     for r in range(grid_size):
         for c in range(grid_size):
-            # Finder pattern corners
             in_tl = r < 3 and c < 3
             in_tr = r < 3 and c >= grid_size - 3
             in_bl = r >= grid_size - 3 and c < 3
@@ -256,11 +419,13 @@ def build_svg_handover_pass(item_id, request_id, item_name, location_text, statu
                 bit_idx += 1
             cells_svg += f'<rect x="{10 + c * cell}" y="{10 + r * cell}" width="{cell - 1}" height="{cell - 1}" rx="2" fill="{fill}"/>'
 
+    mode_badge = f"🔄 Tool Loan ({loan_days} Days)" if "Lending" in str(listing_mode) else "🎁 Permanent Donation"
+
     return f"""
     <div class="result-card" style="border:2px dashed #2e8b57;padding:1rem 1.2rem;margin-top:.6rem;">
         <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between;">
             <div style="flex:1;min-width:200px;">
-                <span class="pill">🎫 VERIFIED DIGITAL HANDOVER PASS</span>
+                <span class="pill">🎫 VERIFIED DIGITAL HANDOVER PASS · {safe_text(mode_badge)}</span>
                 <h4 style="margin:.45rem 0 .2rem;">{safe_text(item_name)}</h4>
                 <div class="muted">Listing: <b>REV-{int(item_id):05d}</b> · Request: <b>REV-R{int(request_id):05d}</b></div>
                 <div class="muted">📍 Handover Zone: <b>{safe_text(location_text)}</b> · Status: <b>{safe_text(status_text)}</b></div>
@@ -303,11 +468,12 @@ with st.sidebar:
     st.markdown("**✨ Full Feature Suite**")
     st.write("🌿 **Explore** 42+ product lifecycles")
     st.write("⚖️ **Calculate** Break-Even Reuse")
-    st.write("🕸️ **Compare** on 5-Axis Radar Charts")
+    st.write("♻️ **Decode** Plastic Resin Symbols")
+    st.write("🤝 **Match** Wishes to Donations")
+    st.write("🔄 **Borrow** from Peer Tool Library")
     st.write("📸 **Scan** condition & DIY Upcycle")
     st.write("🕵️‍♂️ **Detect** Greenwashing Claims")
-    st.write("🎙️ **Ask** via Voice & Read Aloud")
-    st.write("🎫 **QR Pass** & Donor Badges")
+    st.write("📜 **Export** Impact Certificates")
     st.write("🛠️ **Find** Local Repair & E-Waste Hubs")
 
     st.markdown("---")
@@ -610,7 +776,6 @@ def render_tts_buttons(text_to_read, key_suffix):
     """, height=36)
 
 def heuristic_greenwash_check(claim_text):
-    """Offline fallback analyzer if Gemini API key is not configured."""
     lower_c = claim_text.lower()
     buzzwords = [w for w in ["100% eco", "chemical-free", "all-natural", "green", "earth-friendly", "biodegradable plastic", "miracle", "zero-impact", "bamboo plastic"] if w in lower_c]
     has_cert = any(w in lower_c for w in ["fsc", "gots", "iso", "post-consumer", "bis", "epr", "compostable astm"])
@@ -629,6 +794,7 @@ def heuristic_greenwash_check(claim_text):
 with db_connect() as conn:
     donated_count = conn.execute("SELECT COUNT(*) AS n FROM items WHERE status='Donated'").fetchone()["n"]
     available_count = conn.execute("SELECT COUNT(*) AS n FROM items WHERE status='Available'").fetchone()["n"]
+    loan_items_count = conn.execute("SELECT COUNT(*) AS n FROM items WHERE listing_mode LIKE '%Lending%'").fetchone()["n"]
     wishes_count = conn.execute("SELECT COUNT(*) AS n FROM wishes WHERE status='Active'").fetchone()["n"]
     hubs_count = conn.execute("SELECT COUNT(*) AS n FROM repair_hubs").fetchone()["n"]
 
@@ -646,7 +812,8 @@ st.markdown(f"""
     <span class="hero-badge">📊 Impact: <b>{total_waste_diverted_kg:.1f} kg</b> Waste Diverted</span>
     <span class="hero-badge">🌍 Impact: <b>{total_co2_saved_kg:.1f} kg</b> CO₂ Saved</span>
     <span class="hero-badge">🎁 <b>{available_count}</b> Available Items</span>
-    <span class="hero-badge">📌 <b>{wishes_count}</b> Community Wishes</span>
+    <span class="hero-badge">🔄 <b>{loan_items_count}</b> Tool Library Loans</span>
+    <span class="hero-badge">📌 <b>{wishes_count}</b> Active Wishes</span>
     <span class="hero-badge">🛠️ <b>{hubs_count}</b> Repair & E-Waste Hubs</span>
   </div>
 </div>
@@ -654,16 +821,16 @@ st.markdown(f"""
 
 tab_explore, tab_wish, tab_ai, tab_browse, tab_donate, tab_manage, tab_track, tab_repair = st.tabs([
     "🌿 Product Explorer",
-    "📌 Wish Board",
+    "📌 Wish Board & Matchmaker",
     "🤖 REVORA AI Studio",
-    "🔎 Browse & Leaderboard",
-    "🎁 Donate an Item",
+    "🔎 Browse, Loans & Certificates",
+    "🎁 Donate or Lend an Item",
     "📬 Manage Requests",
     "📦 Track & QR Pass",
     "🛠️ Repair & E-Waste Hub",
 ])
 
-# -------------------- Tab 1: Product Explorer & Break-Even Reuse Calculator --------------------
+# -------------------- Tab 1: Product Explorer, Break-Even Calculator & Resin Decoder --------------------
 
 with tab_explore:
     st.markdown("## 🌿 Explore the Product Lifecycle")
@@ -680,6 +847,29 @@ with tab_explore:
         problem = st.selectbox("Main waste problem", problem_options, key="explore_problem")
     with filter_col3:
         priority = st.selectbox("Your priority", ["Overall sustainability", "Longer lifespan", "Less packaging", "Repairability", "Reuse potential"], key="explore_priority")
+
+    # NEW FEATURE: Interactive Plastic Resin & Recycling Symbol Decoder
+    with st.expander("♻️ Interactive Plastic Resin & Packaging Symbol Decoder (#1–#7 & E-Waste)", expanded=False):
+        st.caption("Inspect the triangle resin code or symbol stamped on any product or packaging to see its real-world municipal recyclability:")
+        selected_resin = st.selectbox("Select Packaging Symbol / Resin Code", list(RESIN_DECODER_DATA.keys()), key="resin_decoder_select")
+        r_info = RESIN_DECODER_DATA[selected_resin]
+        rc1, rc2 = st.columns([1.3, 1.7])
+        with rc1:
+            st.markdown(f"""
+            <div class="result-card">
+                <span class="pill">{safe_text(r_info['verdict'])}</span>
+                <h4 style="margin:.55rem 0 .25rem;">{safe_text(selected_resin)}</h4>
+                <p style="font-size:.9rem;"><b>📦 Common Products:</b> {safe_text(r_info['common_uses'])}</p>
+                <p style="font-size:.9rem;"><b>♻️ Municipal Recyclability:</b> {safe_text(r_info['recyclability'])}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        with rc2:
+            st.markdown(f"""
+            <div class="marketplace-note">
+                <b>⚠️ Material & Contamination Risk:</b><br>{safe_text(r_info['risk'])}<br><br>
+                <b>🌱 Recommended Circular Swap:</b><br>{safe_text(r_info['swap'])}
+            </div>
+            """, unsafe_allow_html=True)
 
     search = st.text_input("🔎 Search products by keyword or material", placeholder="Try: bottle, notebook, cable, cleaner, denim...", key="product_search")
     filtered = df.copy()
@@ -757,7 +947,7 @@ with tab_explore:
                 st.markdown(f"""
                 <div class="marketplace-note">
                     <b>⚠️ Likely Waste Pattern:</b><br>{safe_text(chosen['waste_risk'])}<br><br>
-                    <b>🧱 Material:</b> {safe_text(chosen['material'])}  ·  <b>📦 Packaging:</b> {safe_text(chosen['packaging'])}
+                    <b>🧱 Material:</b> {safe_text(chosen['material'])} &nbsp;·&nbsp; <b>📦 Packaging:</b> {safe_text(chosen['packaging'])}
                 </div>
                 <div class="marketplace-note" style="border-left-color:#2e8b57;">
                     <b>💡 Design Opportunity:</b><br>{safe_text(chosen['design_opportunity'])}<br><br>
@@ -773,7 +963,6 @@ with tab_explore:
                 comp_row = df[df["product_name"] == comp_name].iloc[0]
                 st.markdown(build_svg_radar(chosen, comp_row, is_dark=dark_mode), unsafe_allow_html=True)
 
-            # FEATURE 1: Break-Even Reuse Calculator
             st.markdown("### ⚖️ Break-Even Reuse Calculator")
             st.caption("Calculate how quickly switching to a durable alternative in this category pays off its manufacturing footprint.")
             be_uses, co2_g_per_use, weight_g_per_use = BREAKEVEN_PROFILES.get(chosen["category"], (20, 60, 15))
@@ -793,11 +982,34 @@ with tab_explore:
                 with b2: st.metric(f"{expected_years}-Yr Disposables Avoided", f"{total_uses_period:,} units")
                 with b3: st.metric(f"Net Carbon & Waste Saved", f"{co2_saved_kg} kg CO₂", f"{waste_saved_kg} kg waste")
 
-# -------------------- Tab 2: Community Wish Board --------------------
+# -------------------- Tab 2: Community Wish Board & Smart Matchmaker --------------------
 
 with tab_wish:
-    st.markdown("## 📌 Community Wish Board (Reverse Marketplace)")
-    st.write("Looking for a specific item (like textbooks, calculators, or tools)? Post your wish below so community donors can see and fulfill it.")
+    st.markdown("## 📌 Community Wish Board & Smart Matchmaker")
+    st.write("Post items you need (textbooks, calculators, tools) or see automated matches between community wishes and available donations.")
+
+    # NEW FEATURE: Smart Wish-to-Donation Matchmaker Panel
+    live_matches = compute_all_wish_item_matches()
+    if live_matches:
+        st.markdown("### 🤝 Smart Wish-to-Donation Matchmaker (Live Hits)")
+        st.caption("REVORA automatically detected available donations that match active community wishes:")
+        m_cols = st.columns(min(2, len(live_matches)))
+        for idx, pair in enumerate(live_matches):
+            it = pair["item"]
+            w = pair["wish"]
+            kw_str = ", ".join(pair["keywords"]) if pair["keywords"] else "Category Match"
+            with m_cols[idx % 2]:
+                st.markdown(f"""
+                <div class="result-card" style="border-left:5px solid #2e8b57;">
+                    <span class="pill">🎯 {pair['score']}% Match · {safe_text(kw_str)}</span>
+                    <h4 style="margin:.45rem 0 .15rem;">Wish: {safe_text(w['wish_name'])}</h4>
+                    <div class="muted">Requested by <b>{safe_text(w['requester_name'])}</b> ({safe_text(w['location'])}) · Contact: <b>{safe_text(w['requester_contact'])}</b></div>
+                    <hr style="border:none;border-top:1px dashed #cce0cb;margin:8px 0;"/>
+                    <div><b>🎁 Matching Listing:</b> {safe_text(it['item_name'])} (<code>REV-{it['id']:05d}</code> · {safe_text(it['listing_mode'])})</div>
+                    <div class="muted">Listed by <b>{safe_text(it['donor_name'])}</b> in {safe_text(it['location'])}</div>
+                </div>
+                """, unsafe_allow_html=True)
+        st.markdown("---")
 
     wish_mode = st.radio("Wish Board Actions", ["Browse Wishes", "Post a New Wish"], horizontal=True, key="wish_board_mode")
 
@@ -811,7 +1023,7 @@ with tab_wish:
             with w2:
                 req_name = st.text_input("Your Name *", max_chars=80)
                 req_contact = st.text_input("Your Email or Phone *", placeholder="Shown to donors who want to fulfill your wish", max_chars=120)
-            wish_desc = st.text_area("Details / Specifications *", placeholder="Mention model, edition, condition required, or urgency...", max_chars=500)
+            wish_desc = st.text_area("Details / Specifications *", placeholder="Mention model, edition, condition required, or whether borrowing is okay...", max_chars=500)
             submit_wish = st.form_submit_button("📌 Publish Wish", use_container_width=True)
 
         if submit_wish:
@@ -823,7 +1035,7 @@ with tab_wish:
                         "INSERT INTO wishes (wish_name, category, location, description, requester_name, requester_contact, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'Active', ?)",
                         (wish_name.strip(), wish_cat, wish_loc.strip(), wish_desc.strip(), req_name.strip(), req_contact.strip(), now_iso())
                     )
-                st.success("Your wish has been posted to the community Wish Board!")
+                st.success("Your wish has been posted! If an available donation matches, it will appear in the Smart Matchmaker above.")
     else:
         with db_connect() as conn:
             active_wishes = conn.execute("SELECT * FROM wishes WHERE status='Active' ORDER BY created_at DESC").fetchall()
@@ -835,16 +1047,24 @@ with tab_wish:
             for wish in active_wishes:
                 icon = CATEGORY_ICONS.get(wish["category"], "📌")
                 with st.container(border=True):
-                    st.markdown(f"""
-                    <div class="result-card" style="margin-bottom:0;">
-                        <span class="pill">{icon} {safe_text(wish['category'])}</span>  <span class="muted">· Posted by <b>{safe_text(wish['requester_name'])}</b></span>
-                        <h3 style="margin:.45rem 0">{safe_text(wish['wish_name'])}</h3>
-                        <p>{safe_text(wish['description'])}</p>
-                        <div class="muted">📍 {safe_text(wish['location'])} · Contact: <b>{safe_text(wish['requester_contact'])}</b> · {wish['created_at'][:10]}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    w_left, w_right = st.columns([3, 1])
+                    with w_left:
+                        st.markdown(f"""
+                        <div class="result-card" style="margin-bottom:0;">
+                            <span class="pill">{icon} {safe_text(wish['category'])}</span> &nbsp;<span class="muted">· Posted by <b>{safe_text(wish['requester_name'])}</b></span>
+                            <h3 style="margin:.45rem 0">{safe_text(wish['wish_name'])}</h3>
+                            <p>{safe_text(wish['description'])}</p>
+                            <div class="muted">📍 {safe_text(wish['location'])} · Contact: <b>{safe_text(wish['requester_contact'])}</b> · {wish['created_at'][:10]}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with w_right:
+                        if st.button("🎁 Fulfill This Wish", key=f"fulfill_wish_{wish['id']}", use_container_width=True):
+                            st.session_state.prefill_item_name = wish["wish_name"]
+                            st.session_state.prefill_category = wish["category"]
+                            st.session_state.prefill_description = f"Fulfilling community wish posted by {wish['requester_name']}: {wish['description']}"
+                            st.success("Pre-filled in the 'Donate or Lend an Item' tab!")
 
-# -------------------- Tab 3: REVORA AI Studio (Scanner, Upcycling Blueprint, Greenwashing Detector & Voice Chat) --------------------
+# -------------------- Tab 3: REVORA AI Studio --------------------
 
 with tab_ai:
     st.markdown("## 🤖 REVORA AI Studio")
@@ -853,7 +1073,6 @@ with tab_ai:
     if "revora_chat_history" not in st.session_state:
         st.session_state.revora_chat_history = []
 
-    # 1. Object Scanner + DIY Upcycling Blueprint Trigger
     with st.expander("📸 AI Object Condition Scanner & DIY Upcycling Blueprint", expanded=True):
         scan_mode = st.radio("Choose input method", ["📤 Upload a photo", "📷 Take a picture"], horizontal=True, key="scan_input_mode")
         scanned_file = st.file_uploader("Upload a clear photo", type=["jpg", "jpeg", "png", "webp"], key="object_file_uploader") if scan_mode == "📤 Upload a photo" else st.camera_input("Point camera", key="object_camera_input")
@@ -899,14 +1118,13 @@ with tab_ai:
                     """, unsafe_allow_html=True)
                     render_tts_buttons(f"{res.get('object_name')}. Condition {status}. {res.get('action_advice')} Upcycling idea: {res.get('upcycling_blueprint', '')}", "scan_tts")
                     if status in ["Usable", "Needs Minor Repair"]:
-                        if st.button("🎁 Pre-fill 'Donate an Item' Form", use_container_width=True):
+                        if st.button("🎁 Pre-fill 'Donate or Lend' Form", use_container_width=True):
                             st.session_state.prefill_item_name = res.get("object_name", "")
                             st.session_state.prefill_category = res.get("marketplace_category", "Other")
                             st.session_state.prefill_condition = res.get("marketplace_condition", "Good")
                             st.session_state.prefill_description = res.get("draft_listing_description", "")
-                            st.success("Details copied to Donate tab!")
+                            st.success("Details copied to Donate or Lend tab!")
 
-    # FEATURE 2 & 3: Standalone DIY Upcycling Generator & AI Greenwashing Claim Detector
     tool_col1, tool_col2 = st.columns(2)
     with tool_col1:
         with st.expander("🕵️‍♂️ AI Greenwashing Claim Detector", expanded=False):
@@ -1008,10 +1226,10 @@ with tab_ai:
         except Exception as e:
             st.error(f"Error connecting to Gemini: {e}")
 
-# -------------------- Tab 4: Browse Donations & Donor Leaderboard --------------------
+# -------------------- Tab 4: Browse Donations, Tool Library & Impact Certificate Exporter --------------------
 
 with tab_browse:
-    st.markdown("## 🏆 Community Donor Leaderboard & Milestone Badges")
+    st.markdown("## 🏆 Community Donor Leaderboard & Impact Certificates")
     leaders = get_donor_leaderboard()
     if leaders:
         l_cols = st.columns(min(4, len(leaders)))
@@ -1022,26 +1240,73 @@ with tab_browse:
                 <div class="result-card" style="text-align:center;padding:1rem;">
                     <span style="background:{b_bg};color:{b_fg};padding:4px 10px;border-radius:999px;font-size:.75rem;font-weight:700;">{b_title}</span>
                     <h4 style="margin:.5rem 0 .2rem;">{safe_text(leader['donor_name'])}</h4>
-                    <div class="muted">🎁 <b>{int(leader['donated_count'] or 0)}</b> Rehomed · 📦 <b>{int(leader['listed_count'] or 0)}</b> Listed</div>
+                    <div class="muted">🎁 <b>{int(leader['donated_count'] or 0)}</b> Rehomed · 🔄 <b>{int(leader['loan_count'] or 0)}</b> Loans · 📦 <b>{int(leader['listed_count'] or 0)}</b> Listed</div>
                 </div>
                 """, unsafe_allow_html=True)
     else:
-        st.caption("List and rehome items to earn community badges (🌱 Seedling Starter → 🌿 Circular Guardian → 🌳 Zero-Waste Champion)!")
+        st.caption("List, lend, or rehome items to earn community badges and unlock your Impact Certificate!")
+
+    # NEW FEATURE: Impact Certificate Exporter
+    with st.expander("📜 Generate & Download Your Certificate of Circular Impact", expanded=False):
+        st.caption("Export an official, verifiable HTML/printable certificate showcasing your circular economy contributions for student portfolios or NSS/community service logs.")
+        cert_col1, cert_col2 = st.columns([1.2, 1.8])
+        with cert_col1:
+            donor_names_list = [r["donor_name"] for r in leaders] if leaders else []
+            custom_or_select = st.text_input("Contributor / Student Name", value=donor_names_list[0] if donor_names_list else "Rahul R", key="cert_name_input")
+            matched_leader = next((r for r in leaders if r["donor_name"].lower() == custom_or_select.strip().lower()), None)
+            rehomed_val = int(matched_leader["donated_count"] or 0) if matched_leader else 1
+            listed_val = int(matched_leader["listed_count"] or 0) if matched_leader else 1
+            loan_val = int(matched_leader["loan_count"] or 0) if matched_leader else 0
+
+            cert_html_str = build_impact_certificate_html(custom_or_select.strip() or "REVORA Contributor", rehomed_val, listed_val, loan_val)
+            st.download_button(
+                label="📥 Download Printable Impact Certificate (.html)",
+                data=cert_html_str.encode("utf-8"),
+                file_name=f"REVORA_Impact_Certificate_{(custom_or_select.strip() or 'Contributor').replace(' ', '_')}.html",
+                mime="text/html",
+                use_container_width=True,
+            )
+        with cert_col2:
+            b_title, _, _ = get_donor_badge(rehomed_val, listed_val)
+            eff = max(1, rehomed_val + loan_val)
+            st.markdown(f"""
+            <div class="result-card" style="border:2px solid #2e8b57;">
+                <span class="pill">📜 CERTIFICATE PREVIEW · {safe_text(b_title)}</span>
+                <h3 style="margin:.4rem 0 .15rem;">{safe_text(custom_or_select.strip() or 'REVORA Contributor')}</h3>
+                <div class="muted">Verified Impact: <b>{eff * 1.5:.1f} kg</b> Waste Diverted · <b>{eff * 4.2:.1f} kg CO₂</b> Prevented</div>
+                <p style="font-size:.86rem;margin-top:.4rem;">Open the downloaded file in any browser and press <code>Ctrl + P</code> to save as a bordered A4 PDF certificate.</p>
+            </div>
+            """, unsafe_allow_html=True)
 
     st.markdown("---")
-    st.markdown("## ♻️ Browse Available Community Donations")
-    items = get_items(status="Available")
+    st.markdown("## ♻️ Browse Donations & Peer Tool Library")
+    b_col1, b_col2 = st.columns([1.2, 1.8])
+    with b_col1:
+        mode_filter = st.radio(
+            "Filter by Listing Mode",
+            ["All Modes", "Permanent Donation", "Peer Lending (Borrow & Return)"],
+            horizontal=True,
+            key="browse_mode_filter"
+        )
+    with b_col2:
+        browse_search = st.text_input("🔎 Search available items or tools by keyword or location", key="browse_item_search")
+
+    items = get_items(status="Available", search_text=browse_search, listing_mode=mode_filter)
     if not items:
-        st.info("No matching donations yet. List the first item in the Donate tab!")
+        st.info("No matching listings right now. Switch the mode filter or list the first item in the Donate or Lend tab!")
     else:
         for item in items:
             icon = CATEGORY_ICONS.get(item["category"], "🎁")
+            is_loan = "Lending" in str(item["listing_mode"])
+            mode_tag = f"🔄 Borrow & Return ({item['loan_days']} Days Max)" if is_loan else "🎁 Permanent Donation"
             with st.container(border=True):
                 left, right = st.columns([2.6, 1.2])
                 with left:
                     st.markdown(f"""
                     <div class="result-card" style="margin-bottom:0;">
-                        <span class="pill">{icon} {safe_text(item['category'])}</span>  <span class="muted">· Condition: <b>{safe_text(item['item_condition'])}</b></span>
+                        <span class="pill">{icon} {safe_text(item['category'])}</span> &nbsp;
+                        <span class="pill" style="background:#e0f2fe;color:#0c4a6e;">{safe_text(mode_tag)}</span> &nbsp;
+                        <span class="muted">· Condition: <b>{safe_text(item['item_condition'])}</b></span>
                         <h3 style="margin:.45rem 0">{safe_text(item['item_name'])}</h3>
                         <p>{safe_text(item['description'])}</p>
                         <div class="muted">📍 {safe_text(item['location'])} · Listed by <b>{safe_text(item['donor_name'])}</b> (ID: REV-{item['id']:05d})</div>
@@ -1049,11 +1314,11 @@ with tab_browse:
                     """, unsafe_allow_html=True)
                 with right:
                     with st.form(f"request_form_{item['id']}"):
-                        st.markdown("**✋ Request this item**")
+                        st.markdown(f"**✋ {'Request to Borrow' if is_loan else 'Request this Item'}**")
                         req_name = st.text_input("Your name", key=f"req_name_{item['id']}")
                         req_contact = st.text_input("Your email/phone", key=f"req_contact_{item['id']}")
-                        req_message = st.text_area("Message to donor", key=f"req_msg_{item['id']}")
-                        confirm = st.checkbox("I will arrange a safe handover.", key=f"req_confirm_{item['id']}")
+                        req_message = st.text_area("Message (and return plan if borrowing)", key=f"req_msg_{item['id']}")
+                        confirm = st.checkbox("I will arrange a safe public handover.", key=f"req_confirm_{item['id']}")
                         submitted = st.form_submit_button("Send request", use_container_width=True)
                     if submitted:
                         if not req_name.strip() or not req_contact.strip() or not req_message.strip():
@@ -1065,10 +1330,12 @@ with tab_browse:
                                 cursor = conn.execute("INSERT INTO requests (item_id, requester_name, requester_contact, message, status, created_at) VALUES (?, ?, ?, ?, 'Pending', ?)", (item["id"], req_name.strip(), req_contact.strip(), req_message.strip(), now_iso()))
                                 st.success(f"Request sent! Track ID: REV-R{cursor.lastrowid:05d}")
 
-# -------------------- Tab 5: Donate an Item --------------------
+# -------------------- Tab 5: Donate or Lend an Item (with Smart Wish Matchmaker Alert) --------------------
 
 with tab_donate:
-    st.markdown("## 🎁 Give a Useful Item a Second Life")
+    st.markdown("## 🎁 Donate Permanently or 🔄 Lend to the Peer Tool Library")
+    st.write("Pass along surplus items permanently, or lend high-utility tools (calculators, drafting kits, soldering irons, drills) for neighbors to borrow and return.")
+
     with st.form("donate_item_form", clear_on_submit=True):
         d1, d2 = st.columns(2)
         with d1:
@@ -1077,31 +1344,46 @@ with tab_donate:
             default_cat = st.session_state.get("prefill_category", "Clothing & shoes")
             default_cond = st.session_state.get("prefill_condition", "Good")
 
-            item_name = st.text_input("Item name *", value=st.session_state.get("prefill_item_name", ""))
+            item_name = st.text_input("Item or Tool name *", value=st.session_state.get("prefill_item_name", ""))
             item_category = st.selectbox("Category *", cat_options, index=cat_options.index(default_cat) if default_cat in cat_options else 0)
+            listing_mode_sel = st.selectbox("Listing Mode *", ["Permanent Donation", "Peer Lending (Borrow & Return)"])
+            loan_days_sel = st.slider("Max Loan Duration (Days — only applies to Peer Lending)", min_value=1, max_value=30, value=7)
+        with d2:
             item_condition = st.selectbox("Condition *", cond_options, index=cond_options.index(default_cond) if default_cond in cond_options else 1)
             item_location = st.text_input("Area / city *")
-        with d2:
             donor_name = st.text_input("Your name *")
             donor_contact = st.text_input("Your email or phone *")
             contact_type = st.selectbox("Contact preference", ["Email", "Phone / WhatsApp", "Either"])
             listing_pin = st.text_input("Private listing PIN (6+ chars) *", type="password")
-        item_description = st.text_area("Description *", value=st.session_state.get("prefill_description", ""))
+        item_description = st.text_area("Description & pickup/return notes *", value=st.session_state.get("prefill_description", ""))
         safety_confirm = st.checkbox("I confirm this item is legal and safe.")
-        submit_donation = st.form_submit_button("🌱 Publish Donation Listing", use_container_width=True)
+        submit_donation = st.form_submit_button("🌱 Publish Listing", use_container_width=True)
+
     if submit_donation:
         if not all([item_name.strip(), item_location.strip(), donor_name.strip(), donor_contact.strip(), item_description.strip(), listing_pin]) or len(listing_pin) < 6:
             st.error("Please complete all fields and use a 6+ character PIN.")
         else:
+            effective_loan_days = int(loan_days_sel) if "Lending" in listing_mode_sel else 0
             with db_connect() as conn:
-                cursor = conn.execute("INSERT INTO items (item_name, category, item_condition, location, description, donor_name, donor_contact, contact_type, pin_hash, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Available', ?)", (item_name.strip(), item_category, item_condition, item_location.strip(), item_description.strip(), donor_name.strip(), donor_contact.strip(), contact_type, hash_pin(listing_pin), now_iso()))
+                cursor = conn.execute(
+                    """INSERT INTO items (item_name, category, item_condition, location, description, donor_name, donor_contact, contact_type, pin_hash, status, listing_mode, loan_days, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Available', ?, ?, ?)""",
+                    (item_name.strip(), item_category, item_condition, item_location.strip(), item_description.strip(), donor_name.strip(), donor_contact.strip(), contact_type, hash_pin(listing_pin), listing_mode_sel, effective_loan_days, now_iso())
+                )
                 new_id = cursor.lastrowid
-            st.success(f"Listed successfully! Listing ID: **REV-{new_id:05d}**. Save your PIN to manage requests.")
+            st.success(f"Listed successfully ({listing_mode_sel})! Listing ID: **REV-{new_id:05d}**. Save your PIN to manage requests.")
 
-# -------------------- Tab 6: Manage Requests & Generate QR Handover Pass --------------------
+            # Instant Wish-to-Donation Matchmaker Check
+            instant_matches = find_wish_matches_for_item(item_name.strip(), item_category, item_description.strip())
+            if instant_matches:
+                st.markdown("### 🎯 Instant Wish Board Match Detected!")
+                for score, w, overlap in instant_matches:
+                    st.info(f"**{score}% Match:** **{w['requester_name']}** in {w['location']} is looking for **{w['wish_name']}** — Contact: `{w['requester_contact']}`")
+
+# -------------------- Tab 6: Manage Requests, Loan Returns & QR Handover Pass --------------------
 
 with tab_manage:
-    st.markdown("## 📬 Manage Your Donation Requests")
+    st.markdown("## 📬 Manage Your Donation & Tool Library Requests")
     with st.form("manage_listing_form"):
         manage_id_text = st.text_input("Listing ID", placeholder="e.g. REV-00001")
         manage_pin = st.text_input("Private listing PIN", type="password")
@@ -1120,7 +1402,8 @@ with tab_manage:
     if st.session_state.get("managed_listing_id"):
         listing = get_item(st.session_state.managed_listing_id)
         if listing:
-            st.markdown(f"### {safe_text(listing['item_name'])} (`{listing['status']}`)")
+            is_loan = "Lending" in str(listing["listing_mode"])
+            st.markdown(f"### {safe_text(listing['item_name'])} (`{listing['status']}` · {safe_text(listing['listing_mode'])})")
             requests = get_requests_for_item(listing["id"])
             if not requests:
                 st.info("No requests received for this listing yet.")
@@ -1129,7 +1412,7 @@ with tab_manage:
                     st.markdown(f"**Request #REV-R{req['id']:05d} from {safe_text(req['requester_name'])}** · Status: **{req['status']}**")
                     st.write(req["message"])
                     if req["status"] in ["Approved", "Completed"]:
-                        st.markdown(build_svg_handover_pass(listing["id"], req["id"], listing["item_name"], listing["location"], listing["status"]), unsafe_allow_html=True)
+                        st.markdown(build_svg_handover_pass(listing["id"], req["id"], listing["item_name"], listing["location"], listing["status"], listing["listing_mode"], listing["loan_days"]), unsafe_allow_html=True)
                     if req["status"] == "Pending" and listing["status"] == "Available":
                         c1, c2 = st.columns(2)
                         with c1:
@@ -1145,11 +1428,20 @@ with tab_manage:
                                 st.rerun()
 
             if listing["status"] == "Reserved":
-                if st.button("🎉 Mark Handover Complete (Update Community Impact & Badges)", key=f"complete_{listing['id']}", type="primary"):
-                    with db_connect() as conn:
-                        conn.execute("UPDATE items SET status='Donated' WHERE id=?", (listing["id"],))
-                    st.success("Marked as donated! Impact metrics and donor badges updated.")
-                    st.rerun()
+                b_col1, b_col2 = st.columns(2)
+                with b_col1:
+                    if st.button("🎉 Mark Handover / Loan Complete (Update Impact & Badges)", key=f"complete_{listing['id']}", type="primary", use_container_width=True):
+                        with db_connect() as conn:
+                            conn.execute("UPDATE items SET status='Donated' WHERE id=?", (listing["id"],))
+                        st.success("Marked as completed! Impact metrics and badges updated.")
+                        st.rerun()
+                with b_col2:
+                    if is_loan:
+                        if st.button("🔄 Tool Returned — Relist as Available", key=f"relist_{listing['id']}", use_container_width=True):
+                            with db_connect() as conn:
+                                conn.execute("UPDATE items SET status='Available' WHERE id=?", (listing["id"],))
+                            st.success("Tool marked as returned and available for the next borrower!")
+                            st.rerun()
 
 # -------------------- Tab 7: Track Request & View Digital QR Pass --------------------
 
@@ -1169,7 +1461,7 @@ with tab_track:
                 st.markdown(f"### {safe_text(tracked['item_name'])} — Status: **{tracked['status']}**")
                 if tracked["status"] == "Approved":
                     st.success(f"Approved! Donor Contact: **{tracked['donor_contact']}** ({tracked['contact_type']})")
-                    st.markdown(build_svg_handover_pass(tracked["item_id"], tracked["id"], tracked["item_name"], tracked["location"], tracked["item_status"]), unsafe_allow_html=True)
+                    st.markdown(build_svg_handover_pass(tracked["item_id"], tracked["id"], tracked["item_name"], tracked["location"], tracked["item_status"], tracked["listing_mode"], tracked["loan_days"]), unsafe_allow_html=True)
                 elif tracked["status"] == "Pending":
                     st.info("Your request is currently pending donor review.")
                 else:
