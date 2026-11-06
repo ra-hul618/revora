@@ -114,6 +114,27 @@ RESIN_DECODER_DATA = {
     },
 }
 
+# -------------------- Global State & Weights (DEFINED EARLY) --------------------
+
+DEFAULT_WEIGHTS = {
+    "material_score": 0.25,
+    "lifecycle_score": 0.25,
+    "packaging_score": 0.15,
+    "usage_score": 0.20,
+    "end_of_life_score": 0.15,
+}
+DISPLAY_NAMES = {
+    "material_score": "Materials & sourcing",
+    "lifecycle_score": "Durability & lifespan",
+    "packaging_score": "Packaging",
+    "usage_score": "Usage & reuse",
+    "end_of_life_score": "Repair & end-of-life",
+}
+
+if "WEIGHTS" not in st.session_state:
+    st.session_state["WEIGHTS"] = DEFAULT_WEIGHTS.copy()
+WEIGHTS = st.session_state["WEIGHTS"]
+
 # One-time branded splash screen for the first page load in this browser session.
 if not st.session_state.get("revora_splash_seen", False):
     st.session_state["revora_splash_seen"] = True
@@ -435,6 +456,168 @@ def build_svg_handover_pass(item_id, request_id, item_name, location_text, statu
         </div>
     </div>
     """
+
+# -------------------- Sidebar Theme Customizer --------------------
+
+with st.sidebar:
+    st.markdown("## 🌱 REVORA")
+    st.caption("Waste-to-Design & Circular Reuse")
+    dark_mode = st.toggle("🌙 Midnight Forest Dark Mode", value=False, key="revora_dark_mode")
+    st.markdown("---")
+    st.markdown("**✨ Full Feature Suite**")
+    st.write("🌿 **Explore** 105 product lifecycles")
+    st.write("⚖️ **Calculate** Break-Even Reuse")
+    st.write("♻️ **Decode** Plastic Resin Symbols")
+    st.write("🤝 **Match** Wishes to Donations")
+    st.write("🔄 **Borrow** from Peer Tool Library")
+    st.write("📸 **Scan** condition & DIY Upcycle")
+    st.write("🕵️‍♂️ **Detect** Greenwashing Claims")
+    st.write("📜 **Export** Impact Certificates")
+    st.write("🛠️ **Find** Local Repair & E-Waste Hubs")
+
+    st.markdown("---")
+    with st.expander("🎛️ Customize EcoScore Weights", expanded=False):
+        st.caption("Adjust sliders to personalize how REVORA calculates EcoScores:")
+        w_m = st.slider("Materials & sourcing", 0, 100, int(DEFAULT_WEIGHTS["material_score"]*100), 5, key="w_m")
+        w_l = st.slider("Durability & lifespan", 0, 100, int(DEFAULT_WEIGHTS["lifecycle_score"]*100), 5, key="w_l")
+        w_p = st.slider("Packaging impact", 0, 100, int(DEFAULT_WEIGHTS["packaging_score"]*100), 5, key="w_p")
+        w_u = st.slider("Usage & reuse", 0, 100, int(DEFAULT_WEIGHTS["usage_score"]*100), 5, key="w_u")
+        w_e = st.slider("Repair & end-of-life", 0, 100, int(DEFAULT_WEIGHTS["end_of_life_score"]*100), 5, key="w_e")
+        total_w = max(1, w_m + w_l + w_p + w_u + w_e)
+        st.session_state["WEIGHTS"] = {
+            "material_score": w_m / total_w,
+            "lifecycle_score": w_l / total_w,
+            "packaging_score": w_p / total_w,
+            "usage_score": w_u / total_w,
+            "end_of_life_score": w_e / total_w,
+        }
+    WEIGHTS = st.session_state["WEIGHTS"]
+
+    st.markdown("---")
+    st.caption("Demo EcoScores are heuristic estimates, not verified lifecycle assessments.")
+    st.caption("Arrange handovers in safe, public places.")
+
+# -------------------- Dynamic Theme CSS --------------------
+
+if dark_mode:
+    theme_vars = """
+        --bg-main: #0b1911;
+        --bg-sidebar: linear-gradient(180deg, #0f2419 0%, #091710 100%);
+        --card-bg: rgba(20, 43, 30, 0.88);
+        --card-border: rgba(110, 190, 135, 0.22);
+        --text-main: #ecfdf3;
+        --text-body: #cce3d4;
+        --text-muted: #93b5a0;
+        --score-color: #7ee094;
+        --pill-bg: linear-gradient(135deg, #1b4d31 0%, #256642 100%);
+        --pill-text: #d9fbe5;
+        --tab-bar-bg: rgba(16, 36, 25, 0.85);
+        --tab-text: #b7d9c4;
+        --track-bg: #1e3a2a;
+        --note-bg: rgba(18, 40, 28, 0.92);
+    """
+else:
+    theme_vars = """
+        --bg-main: #f4f8f4;
+        --bg-sidebar: linear-gradient(180deg, #e7f1e6 0%, #dbeadd 100%);
+        --card-bg: rgba(255, 255, 255, 0.92);
+        --card-border: rgba(27, 103, 65, 0.15);
+        --text-main: #102a1d;
+        --text-body: #2c4235;
+        --text-muted: #5b6d61;
+        --score-color: #1b6741;
+        --pill-bg: linear-gradient(135deg, #dcecdf 0%, #c8e4ce 100%);
+        --pill-text: #13462b;
+        --tab-bar-bg: rgba(255, 255, 255, 0.82);
+        --tab-text: #264c38;
+        --track-bg: #e6efe6;
+        --note-bg: rgba(255, 255, 255, 0.92);
+    """
+
+st.markdown(f"""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
+    :root {{ {theme_vars} }}
+
+    html, body, [class*="css"] {{ font-family: 'Plus Jakarta Sans', sans-serif; color: var(--text-main); }}
+    h1, h2, h3, h4, .splash-wordmark {{ font-family: 'Outfit', sans-serif !important; color: var(--text-main); }}
+    p, li, label, .stMarkdown {{ color: var(--text-body); }}
+
+    .stApp {{
+        background-color: var(--bg-main);
+        background-image:
+            radial-gradient(at 12% 10%, rgba(168, 217, 119, 0.16) 0px, transparent 48%),
+            radial-gradient(at 88% 15%, rgba(35, 102, 71, 0.14) 0px, transparent 50%),
+            radial-gradient(at 50% 90%, rgba(181, 229, 140, 0.14) 0px, transparent 55%);
+    }}
+
+    .revora-splash {{
+        position: fixed; inset: 0; z-index: 999999; display: flex;
+        align-items: center; justify-content: center; text-align: center;
+        background: radial-gradient(circle at 50% 35%, #1f573b 0%, #103523 52%, #081c13 100%);
+        color: #f4ffe9; animation: revoraSplashFade 2.8s ease forwards;
+        pointer-events: none;
+    }}
+    .splash-content {{ display:flex; flex-direction:column; align-items:center; padding:24px; animation: revoraRise .8s ease both; }}
+    .revora-mark {{ width:112px; height:112px; filter: drop-shadow(0 0 22px #80bf7966); animation: revoraPulse 1.5s ease-in-out infinite; }}
+    .splash-wordmark {{ margin-top:18px; font-size:clamp(2.6rem, 7vw, 4.5rem); font-weight:800; letter-spacing:.22em; padding-left:.22em; color:#f4ffe9 !important; }}
+    .splash-tagline {{ margin-top:5px; color:#b9d9b8; font-size:.78rem; letter-spacing:.24em; }}
+    .splash-loader {{ width:180px; height:3px; margin-top:30px; overflow:hidden; background:#ffffff24; border-radius:10px; }}
+    .splash-loader span {{ display:block; width:40%; height:100%; border-radius:10px; background:#b5e58c; animation: revoraLoad 1.2s ease-in-out infinite; }}
+    .splash-loading-text {{ margin-top:13px; color:#c8ddca; font-size:.85rem; }}
+    @keyframes revoraSplashFade {{ 0%,72% {{ opacity:1; visibility:visible; }} 100% {{ opacity:0; visibility:hidden; }} }}
+    @keyframes revoraPulse {{ 0%,100% {{ transform:scale(1); }} 50% {{ transform:scale(1.06); }} }}
+    @keyframes revoraLoad {{ 0% {{ transform:translateX(-110%); }} 100% {{ transform:translateX(360%); }} }}
+    @keyframes revoraRise {{ from {{ opacity:0; transform:translateY(12px); }} to {{ opacity:1; transform:translateY(0); }} }}
+
+    [data-testid="stSidebar"] {{ background: var(--bg-sidebar); border-right: 1px solid var(--card-border); }}
+
+    .hero {{
+        position: relative; overflow: hidden; padding: 2.2rem 2.4rem; border-radius: 26px;
+        background: linear-gradient(125deg, #0d2e20 0%, #1b563b 48%, #2e7a53 100%);
+        color: white; margin-bottom: 1.4rem; box-shadow: 0 20px 42px -15px rgba(18, 59, 43, 0.38);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+    }}
+    .hero h1 {{ color: white !important; font-size: clamp(2.4rem, 4.5vw, 3.4rem); font-weight: 800; margin: 0.25rem 0 0; letter-spacing: -1px; }}
+    .hero p {{ color: #e3f3e7 !important; font-size: 1.08rem; margin: .35rem 0 0; max-width: 720px; }}
+    .hero-badges {{ display: flex; flex-wrap: wrap; gap: 10px; margin-top: 1.15rem; }}
+    .hero-badge {{
+        background: rgba(255, 255, 255, 0.12); backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.22); color: #f4ffe9;
+        padding: 0.38rem 0.85rem; border-radius: 999px; font-size: 0.82rem; font-weight: 600;
+    }}
+
+    .pill {{ display: inline-block; padding: .3rem .75rem; border-radius: 999px; background: var(--pill-bg); color: var(--pill-text); font-size: .8rem; font-weight: 700; }}
+
+    .result-card {{
+        border: 1px solid var(--card-border); border-radius: 20px; padding: 1.3rem 1.35rem;
+        background: var(--card-bg); backdrop-filter: blur(10px); height: 100%; margin-bottom: 0.65rem;
+        box-shadow: 0 8px 22px -8px rgba(0, 0, 0, 0.12);
+        transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.24s ease, border-color 0.24s ease;
+    }}
+    .result-card:hover {{ transform: translateY(-5px); box-shadow: 0 18px 34px -10px rgba(27, 103, 65, 0.25); border-color: #4f9369; }}
+    .muted {{ color: var(--text-muted) !important; font-size: .88rem; font-weight: 500; }}
+    .big-score {{ font-size: 2.1rem; font-weight: 800; color: var(--score-color); font-family: 'Outfit', sans-serif; }}
+
+    .eco-bar-track {{ width: 100%; height: 7px; background: var(--track-bg); border-radius: 999px; overflow: hidden; margin: 8px 0 12px; }}
+    .eco-bar-fill {{ height: 100%; border-radius: 999px; transition: width 0.4s ease; }}
+
+    div[data-baseweb="tab-list"] {{
+        gap: 6px; background: var(--tab-bar-bg); backdrop-filter: blur(10px);
+        padding: 8px 10px; border-radius: 18px; border: 1px solid var(--card-border); margin-bottom: 1rem;
+        flex-wrap: wrap;
+    }}
+    button[data-baseweb="tab"] {{ border-radius: 12px !important; padding: 8px 14px !important; font-weight: 600 !important; color: var(--tab-text) !important; }}
+    button[data-baseweb="tab"][aria-selected="true"] {{
+        background: linear-gradient(135deg, #1b6741 0%, #2d8659 100%) !important; color: #ffffff !important;
+        box-shadow: 0 4px 12px rgba(27, 103, 65, 0.28) !important;
+    }}
+    div[data-baseweb="tab-highlight"] {{ display: none !important; }}
+    div[data-testid="stMetric"] {{ background: var(--card-bg); border: 1px solid var(--card-border); padding: 14px 18px; border-radius: 18px; }}
+    .marketplace-note {{ border: 1px solid var(--card-border); border-left: 5px solid #2e8b57; border-radius: 16px; padding: 1rem 1.2rem; background: var(--note-bg); margin: .5rem 0 1.1rem; }}
+</style>
+""", unsafe_allow_html=True)
 
 # -------------------- 105-Product Embedded Fallback Dataset --------------------
 
