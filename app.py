@@ -42,7 +42,6 @@ CATEGORY_ICONS = {
     "Other": "✨",
 }
 
-# Break-even baseline assumptions: (manufacturing_uses_to_offset, single_use_co2_grams, single_use_weight_grams)
 BREAKEVEN_PROFILES = {
     "Drinkware": (25, 82, 18),
     "Bags": (45, 33, 8),
@@ -56,7 +55,6 @@ BREAKEVEN_PROFILES = {
     "Household": (16, 110, 28),
 }
 
-# Plastic Resin & Packaging Symbol Decoder Data
 RESIN_DECODER_DATA = {
     "♳ #1 PET / PETE (Polyethylene Terephthalate)": {
         "common_uses": "Disposable water bottles, soda bottles, clear condiment jars",
@@ -66,7 +64,7 @@ RESIN_DECODER_DATA = {
         "swap": "Food-grade 304 stainless steel or borosilicate glass bottle",
     },
     "♴ #2 HDPE (High-Density Polyethylene)": {
-        "common_uses": "Shampoo bottles, detergent jugs, milk containers,cleaning triggers",
+        "common_uses": "Shampoo bottles, detergent jugs, milk containers, cleaning triggers",
         "recyclability": "High (~60%+ acceptance in rigid container streams)",
         "risk": "Low leaching risk, but triggers/pumps contain mixed metal springs that jam recyclers",
         "verdict": "✅ Widely Recyclable",
@@ -179,7 +177,6 @@ def init_db():
             created_at TEXT NOT NULL
         )
         """)
-        # Safe schema migration for existing databases
         existing_cols = [r["name"] for r in conn.execute("PRAGMA table_info(items)").fetchall()]
         if "listing_mode" not in existing_cols:
             conn.execute("ALTER TABLE items ADD COLUMN listing_mode TEXT NOT NULL DEFAULT 'Permanent Donation'")
@@ -280,7 +277,6 @@ def get_request_for_tracking(request_id, requester_contact):
         ).fetchone()
 
 def find_wish_matches_for_item(item_name, item_category, item_desc=""):
-    """Cross-references an item against active Community Wish Board posts."""
     with db_connect() as conn:
         wishes = conn.execute("SELECT * FROM wishes WHERE status='Active' ORDER BY created_at DESC").fetchall()
     tokens = {
@@ -300,7 +296,6 @@ def find_wish_matches_for_item(item_name, item_category, item_desc=""):
     return matches[:4]
 
 def compute_all_wish_item_matches():
-    """Finds all live pairs between active wishes and available marketplace items."""
     avail_items = get_items(status="Available")
     pairs = []
     for it in avail_items:
@@ -341,7 +336,6 @@ def get_donor_leaderboard():
     return rows
 
 def build_impact_certificate_html(person_name, rehomed_cnt, listed_cnt, loan_cnt):
-    """Generates a printable HTML/SVG Certificate of Circular Impact."""
     badge_title, _, _ = get_donor_badge(rehomed_cnt, listed_cnt)
     effective_actions = max(1, rehomed_cnt + loan_cnt) if (rehomed_cnt + listed_cnt + loan_cnt) > 0 else 1
     waste_kg = round(effective_actions * 1.5, 1)
@@ -397,7 +391,6 @@ def build_impact_certificate_html(person_name, rehomed_cnt, listed_cnt, loan_cnt
 </html>"""
 
 def build_svg_handover_pass(item_id, request_id, item_name, location_text, status_text, listing_mode="Permanent Donation", loan_days=0):
-    """Generates a deterministic SVG QR-style verification matrix pass with zero external dependencies."""
     seed_str = f"REVORA-{item_id}-{request_id}-{item_name}"
     digest = hashlib.sha256(seed_str.encode("utf-8")).hexdigest().upper()
     pass_code = f"REV-PASS-{digest[:8]}"
@@ -443,229 +436,114 @@ def build_svg_handover_pass(item_id, request_id, item_name, location_text, statu
     </div>
     """
 
-# -------------------- Sidebar with Theme Toggle & Weight Customizer --------------------
-
-DEFAULT_WEIGHTS = {
-    "material_score": 0.25,
-    "lifecycle_score": 0.25,
-    "packaging_score": 0.15,
-    "usage_score": 0.20,
-    "end_of_life_score": 0.15,
-}
-DISPLAY_NAMES = {
-    "material_score": "Materials & sourcing",
-    "lifecycle_score": "Durability & lifespan",
-    "packaging_score": "Packaging",
-    "usage_score": "Usage & reuse",
-    "end_of_life_score": "Repair & end-of-life",
-}
-
-with st.sidebar:
-    st.markdown("## 🌱 REVORA")
-    st.caption("Waste-to-Design & Circular Reuse")
-    dark_mode = st.toggle("🌙 Midnight Forest Dark Mode", value=False, key="revora_dark_mode")
-    st.markdown("---")
-    st.markdown("**✨ Full Feature Suite**")
-    st.write("🌿 **Explore** 42+ product lifecycles")
-    st.write("⚖️ **Calculate** Break-Even Reuse")
-    st.write("♻️ **Decode** Plastic Resin Symbols")
-    st.write("🤝 **Match** Wishes to Donations")
-    st.write("🔄 **Borrow** from Peer Tool Library")
-    st.write("📸 **Scan** condition & DIY Upcycle")
-    st.write("🕵️‍♂️ **Detect** Greenwashing Claims")
-    st.write("📜 **Export** Impact Certificates")
-    st.write("🛠️ **Find** Local Repair & E-Waste Hubs")
-
-    st.markdown("---")
-    with st.expander("🎛️ Customize EcoScore Weights", expanded=False):
-        st.caption("Adjust sliders to personalize how REVORA calculates EcoScores:")
-        w_m = st.slider("Materials & sourcing", 0, 100, 25, 5, key="w_m")
-        w_l = st.slider("Durability & lifespan", 0, 100, 25, 5, key="w_l")
-        w_p = st.slider("Packaging impact", 0, 100, 15, 5, key="w_p")
-        w_u = st.slider("Usage & reuse", 0, 100, 20, 5, key="w_u")
-        w_e = st.slider("Repair & end-of-life", 0, 100, 15, 5, key="w_e")
-        total_w = max(1, w_m + w_l + w_p + w_u + w_e)
-        WEIGHTS = {
-            "material_score": w_m / total_w,
-            "lifecycle_score": w_l / total_w,
-            "packaging_score": w_p / total_w,
-            "usage_score": w_u / total_w,
-            "end_of_life_score": w_e / total_w,
-        }
-    if "WEIGHTS" not in locals():
-        WEIGHTS = DEFAULT_WEIGHTS.copy()
-
-    st.markdown("---")
-    st.caption("Demo EcoScores are heuristic estimates, not verified lifecycle assessments.")
-    st.caption("Arrange handovers in safe, public places.")
-
-# -------------------- Dynamic Theme CSS --------------------
-
-if dark_mode:
-    theme_vars = """
-        --bg-main: #0b1911;
-        --bg-sidebar: linear-gradient(180deg, #0f2419 0%, #091710 100%);
-        --card-bg: rgba(20, 43, 30, 0.88);
-        --card-border: rgba(110, 190, 135, 0.22);
-        --text-main: #ecfdf3;
-        --text-body: #cce3d4;
-        --text-muted: #93b5a0;
-        --score-color: #7ee094;
-        --pill-bg: linear-gradient(135deg, #1b4d31 0%, #256642 100%);
-        --pill-text: #d9fbe5;
-        --tab-bar-bg: rgba(16, 36, 25, 0.85);
-        --tab-text: #b7d9c4;
-        --track-bg: #1e3a2a;
-        --note-bg: rgba(18, 40, 28, 0.92);
-    """
-else:
-    theme_vars = """
-        --bg-main: #f4f8f4;
-        --bg-sidebar: linear-gradient(180deg, #e7f1e6 0%, #dbeadd 100%);
-        --card-bg: rgba(255, 255, 255, 0.92);
-        --card-border: rgba(27, 103, 65, 0.15);
-        --text-main: #102a1d;
-        --text-body: #2c4235;
-        --text-muted: #5b6d61;
-        --score-color: #1b6741;
-        --pill-bg: linear-gradient(135deg, #dcecdf 0%, #c8e4ce 100%);
-        --pill-text: #13462b;
-        --tab-bar-bg: rgba(255, 255, 255, 0.82);
-        --tab-text: #264c38;
-        --track-bg: #e6efe6;
-        --note-bg: rgba(255, 255, 255, 0.92);
-    """
-
-st.markdown(f"""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
-
-    :root {{ {theme_vars} }}
-
-    html, body, [class*="css"] {{ font-family: 'Plus Jakarta Sans', sans-serif; color: var(--text-main); }}
-    h1, h2, h3, h4, .splash-wordmark {{ font-family: 'Outfit', sans-serif !important; color: var(--text-main); }}
-    p, li, label, .stMarkdown {{ color: var(--text-body); }}
-
-    .stApp {{
-        background-color: var(--bg-main);
-        background-image:
-            radial-gradient(at 12% 10%, rgba(168, 217, 119, 0.16) 0px, transparent 48%),
-            radial-gradient(at 88% 15%, rgba(35, 102, 71, 0.14) 0px, transparent 50%),
-            radial-gradient(at 50% 90%, rgba(181, 229, 140, 0.14) 0px, transparent 55%);
-    }}
-
-    .revora-splash {{
-        position: fixed; inset: 0; z-index: 999999; display: flex;
-        align-items: center; justify-content: center; text-align: center;
-        background: radial-gradient(circle at 50% 35%, #1f573b 0%, #103523 52%, #081c13 100%);
-        color: #f4ffe9; animation: revoraSplashFade 2.8s ease forwards;
-        pointer-events: none;
-    }}
-    .splash-content {{ display:flex; flex-direction:column; align-items:center; padding:24px; animation: revoraRise .8s ease both; }}
-    .revora-mark {{ width:112px; height:112px; filter: drop-shadow(0 0 22px #80bf7966); animation: revoraPulse 1.5s ease-in-out infinite; }}
-    .splash-wordmark {{ margin-top:18px; font-size:clamp(2.6rem, 7vw, 4.5rem); font-weight:800; letter-spacing:.22em; padding-left:.22em; color:#f4ffe9 !important; }}
-    .splash-tagline {{ margin-top:5px; color:#b9d9b8; font-size:.78rem; letter-spacing:.24em; }}
-    .splash-loader {{ width:180px; height:3px; margin-top:30px; overflow:hidden; background:#ffffff24; border-radius:10px; }}
-    .splash-loader span {{ display:block; width:40%; height:100%; border-radius:10px; background:#b5e58c; animation: revoraLoad 1.2s ease-in-out infinite; }}
-    .splash-loading-text {{ margin-top:13px; color:#c8ddca; font-size:.85rem; }}
-    @keyframes revoraSplashFade {{ 0%,72% {{ opacity:1; visibility:visible; }} 100% {{ opacity:0; visibility:hidden; }} }}
-    @keyframes revoraPulse {{ 0%,100% {{ transform:scale(1); }} 50% {{ transform:scale(1.06); }} }}
-    @keyframes revoraLoad {{ 0% {{ transform:translateX(-110%); }} 100% {{ transform:translateX(360%); }} }}
-    @keyframes revoraRise {{ from {{ opacity:0; transform:translateY(12px); }} to {{ opacity:1; transform:translateY(0); }} }}
-
-    [data-testid="stSidebar"] {{ background: var(--bg-sidebar); border-right: 1px solid var(--card-border); }}
-
-    .hero {{
-        position: relative; overflow: hidden; padding: 2.2rem 2.4rem; border-radius: 26px;
-        background: linear-gradient(125deg, #0d2e20 0%, #1b563b 48%, #2e7a53 100%);
-        color: white; margin-bottom: 1.4rem; box-shadow: 0 20px 42px -15px rgba(18, 59, 43, 0.38);
-        border: 1px solid rgba(255, 255, 255, 0.14);
-    }}
-    .hero h1 {{ color: white !important; font-size: clamp(2.4rem, 4.5vw, 3.4rem); font-weight: 800; margin: 0.25rem 0 0; letter-spacing: -1px; }}
-    .hero p {{ color: #e3f3e7 !important; font-size: 1.08rem; margin: .35rem 0 0; max-width: 720px; }}
-    .hero-badges {{ display: flex; flex-wrap: wrap; gap: 10px; margin-top: 1.15rem; }}
-    .hero-badge {{
-        background: rgba(255, 255, 255, 0.12); backdrop-filter: blur(8px);
-        border: 1px solid rgba(255, 255, 255, 0.22); color: #f4ffe9;
-        padding: 0.38rem 0.85rem; border-radius: 999px; font-size: 0.82rem; font-weight: 600;
-    }}
-
-    .pill {{ display: inline-block; padding: .3rem .75rem; border-radius: 999px; background: var(--pill-bg); color: var(--pill-text); font-size: .8rem; font-weight: 700; }}
-
-    .result-card {{
-        border: 1px solid var(--card-border); border-radius: 20px; padding: 1.3rem 1.35rem;
-        background: var(--card-bg); backdrop-filter: blur(10px); height: 100%; margin-bottom: 0.65rem;
-        box-shadow: 0 8px 22px -8px rgba(0, 0, 0, 0.12);
-        transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.24s ease, border-color 0.24s ease;
-    }}
-    .result-card:hover {{ transform: translateY(-5px); box-shadow: 0 18px 34px -10px rgba(27, 103, 65, 0.25); border-color: #4f9369; }}
-    .muted {{ color: var(--text-muted) !important; font-size: .88rem; font-weight: 500; }}
-    .big-score {{ font-size: 2.1rem; font-weight: 800; color: var(--score-color); font-family: 'Outfit', sans-serif; }}
-
-    .eco-bar-track {{ width: 100%; height: 7px; background: var(--track-bg); border-radius: 999px; overflow: hidden; margin: 8px 0 12px; }}
-    .eco-bar-fill {{ height: 100%; border-radius: 999px; transition: width 0.4s ease; }}
-
-    div[data-baseweb="tab-list"] {{
-        gap: 6px; background: var(--tab-bar-bg); backdrop-filter: blur(10px);
-        padding: 8px 10px; border-radius: 18px; border: 1px solid var(--card-border); margin-bottom: 1rem;
-        flex-wrap: wrap;
-    }}
-    button[data-baseweb="tab"] {{ border-radius: 12px !important; padding: 8px 14px !important; font-weight: 600 !important; color: var(--tab-text) !important; }}
-    button[data-baseweb="tab"][aria-selected="true"] {{
-        background: linear-gradient(135deg, #1b6741 0%, #2d8659 100%) !important; color: #ffffff !important;
-        box-shadow: 0 4px 12px rgba(27, 103, 65, 0.28) !important;
-    }}
-    div[data-baseweb="tab-highlight"] {{ display: none !important; }}
-    div[data-testid="stMetric"] {{ background: var(--card-bg); border: 1px solid var(--card-border); padding: 14px 18px; border-radius: 18px; }}
-    .marketplace-note {{ border: 1px solid var(--card-border); border-left: 5px solid #2e8b57; border-radius: 16px; padding: 1rem 1.2rem; background: var(--note-bg); margin: .5rem 0 1.1rem; }}
-</style>
-""", unsafe_allow_html=True)
-
-# -------------------- Expanded 42-Product Errorless Dataset --------------------
+# -------------------- 105-Product Embedded Fallback Dataset --------------------
 
 _FALLBACK_PRODUCTS_CSV = '''product_id,product_name,category,material,packaging,description,waste_risk,design_opportunity,tradeoff,material_score,lifecycle_score,packaging_score,usage_score,end_of_life_score
-1,Disposable PET water bottle,Drinkware,PET plastic,Single-use plastic bottle,Convenient single-use water container,Repeated single-use packaging,Refill from safe drinking water or use a durable bottle when used frequently,Reusable alternatives require repeated use and cleaning,35,25,20,25,35
-2,Reusable stainless steel bottle,Drinkware,Stainless steel,Minimal or cardboard packaging,Durable bottle designed for repeated use,Can be underused or lost,Use consistently for many refill cycles,Material-intensive manufacture and cleaning needs matter,65,85,80,90,65
-3,Reusable glass bottle,Drinkware,Glass,Cardboard or protective packaging,Reusable bottle for home or office,Breakage can shorten lifespan,Use in settings where breakage risk is low,Heavier transport and breakage risk,70,70,75,80,70
-4,Single-use shopping bag,Bags,Thin plastic,No additional packaging,Lightweight carrier bag,Often discarded after one trip,Reuse bags already owned before acquiring new ones,Some reusable bags require many uses to offset production,25,20,30,25,25
-5,Reusable fabric tote,Bags,Cotton or blended fabric,Minimal packaging,Reusable shopping bag,May accumulate unused bags,Keep a small set and reuse frequently,Cotton production can be resource intensive,55,75,75,80,60
-6,Recycled-content paper bag,Bags,Recycled paper,Paper bag,Paper carrier with recycled content,May tear when wet or overloaded,Reuse when practical and recycle where accepted,Not always lower impact than reusing a bag already owned,70,45,65,50,75
-7,Disposable coffee cup,Food & drink,Paper with possible lining,Single-use cup,Takeaway cup used for one drink,Repeated cups and lids,Bring a cup or use dine-in service when practical,Reusable cup benefits depend on repeated use and washing,45,20,20,25,35
-8,Reusable coffee cup,Food & drink,Stainless steel or durable plastic,Minimal packaging,Reusable cup for takeaway drinks,May be forgotten or rarely used,Store it where it is easy to remember,Manufacture and washing impacts need repeated use,65,80,75,85,60
-9,Conventional toothbrush,Personal care,Plastic,Cardboard and plastic blister,Low-cost toothbrush with replaceable use cycle,Entire handle is often discarded,Consider replaceable-head options if compatible and durable,Material claims and recycling routes vary,35,45,45,55,30
-10,Replaceable-head toothbrush,Personal care,Reusable handle with replaceable head,Compact packaging,Only the brush head needs regular replacement,Replacement heads still create waste,Use compatible heads and check material disposal,Availability and actual material mix vary,60,75,70,80,55
-11,Disposable cleaning spray bottle,Home cleaning,Plastic bottle and trigger,Plastic bottle plus label,Ready-to-use household cleaner,Packaging and leftover liquid can be wasted,Use measured dispensing and refill options,Refills help only when total packaging is reduced,35,50,25,45,35
-12,Refillable cleaning bottle,Home cleaning,Durable plastic or glass,Refill pouch or concentrate,Reusable container with refill format,Refill packaging may still be significant,Compare packaging per volume and follow dilution instructions,Concentrate transport and refill material matter,55,75,65,80,55
-13,Standard notebook,Stationery,Paper and cardboard,Paper wrap,Bound notebook for writing,Unused pages may be discarded with the notebook,Finish existing notebooks and consider refillable formats,Binding and refill availability vary,65,55,70,65,65
-14,Refillable notebook,Stationery,Reusable cover and replaceable paper,Minimal packaging,Reusable cover with refill pages,Refills still use paper,Replace only the pages needed and use both sides,Extra hardware is only beneficial if reused,60,80,75,85,65
-15,Non-repairable charging cable,Electronics,Plastic and copper,Small cardboard or plastic pack,Cable with fixed connector assembly,Failure near one connector can discard the whole cable,Look for reinforced strain relief and repairable modular parts,Modular products may cost more or be hard to find,40,30,45,70,25
-16,Modular repairable cable concept,Electronics,Replaceable connector modules,Compact recyclable packaging,Concept design allowing a failed connector to be replaced,Design is a proposal and may not be commercially available,Prototype replaceable connectors and document repair instructions,Compatibility and safety testing are essential,60,80,75,85,65
-17,Fast-fashion synthetic shirt,Clothing,Polyester blend,Plastic mailer or tag,Low-cost synthetic garment,Short use cycles and difficult fibre recycling,Buy fewer durable items and extend wear life,Recycled fibres do not remove all shedding or end-of-life issues,35,40,35,45,30
-18,Durable repairable shirt,Clothing,Cotton or durable blend,Minimal packaging,Garment intended for repeated wear and repair,May still be discarded due to fit or style changes,Choose versatile fit and repair small damage,Material impact depends on fibre source and production,55,75,70,85,50
-19,Single-use food container,Food containers,Plastic or coated fibre,Single-use container,Takeaway container for one meal,Frequent packaging waste,Choose reusable containers where washing and return are practical,Food safety and cleaning requirements matter,30,25,20,30,30
-20,Reusable food container,Food containers,Durable glass or stainless steel,Minimal packaging,Container designed for repeated meal storage,Can be lost or left unused,Use regularly and maintain the seal,Heavier manufacture and washing must be considered,65,85,80,90,70
-21,Disposable batteries,Household,Primary battery chemistry,Cardboard and plastic pack,Single-use battery for low-drain devices,Repeated battery purchases and disposal,Use rechargeable batteries for compatible frequent-use devices,Rechargeable batteries are not ideal for every device or use,40,40,50,45,35
-22,Rechargeable battery set,Household,Rechargeable battery chemistry,Cardboard pack,Rechargeable cells for repeated use,May be unsuitable for infrequently used devices,Match charger and battery type to the device,Charging electricity and eventual proper recycling matter,55,80,70,85,55
-23,Plastic-wrapped soap bars,Personal care,Soap and plastic film,Plastic wrap,Bar soap in plastic packaging,Packaging after each purchase,Choose paper-wrapped or unpackaged options when hygiene and availability allow,Paper is not automatically better if coatings or waste are high,55,60,35,70,55
-24,Paper-wrapped soap bar,Personal care,Soap and paper,Paper wrap,Bar soap with paper packaging,Paper packaging still requires resources,Use fully and recycle packaging if accepted,"Check inks, coatings, and local recycling acceptance",60,60,75,70,65
-25,Fast-fashion denim jeans,Clothing,Cotton and elastane blend,Paper tag,Everyday denim trousers,Fast trends and heavy water consumption during production,"Buy classic cuts, wash less frequently, and repair denim when worn",Blend fibers complicate recycling,45,60,70,75,40
-26,Thrifted vintage denim jeans,Clothing,Pre-owned cotton denim,Minimal tag,Secondhand durable denim jeans,Previous wear may require minor tailoring,"Inspect seams and wash before wear",Extends product lifecycle and avoids new manufacturing,90,85,90,95,85
-27,Disposable plastic razor,Personal care,Mixed plastics and steel,Blister pack,Cheap disposable shaving razor,Entire unit discarded frequently,Switch to safety razor with replaceable steel blades,Mixed plastics are nearly impossible to recycle locally,20,30,25,30,20
-28,Metal safety razor,Personal care,Solid brass or stainless steel,Cardboard box,Classic razor using only replaceable steel blades,Blade changes require basic care,"Use for decades, and recycle only small steel blades",Initial learning curve for shaving technique,85,95,90,90,95
-29,Wired over-ear headphones,Electronics,"Plastic, copper, and synthetic leather",Cardboard box,Audio headphones with fixed cable,Cable fraying can ruin the entire unit,Look for replaceable audio cables and ear cushions,Mixed materials complicate end-of-life disassembly,45,60,60,75,45
-30,Modular headphones with replaceable parts,Electronics,"Aluminum, fabric, and replaceable modules",Recycled cardboard,Headphones designed with snap-on modular parts,Fixed or glued components make internal fixes difficult,"Replacing ear pads or batteries extends lifespan for years",Higher initial cost but significantly lower long-term waste,75,90,85,90,85
-31,Disposable paper plates,Food containers,"Pressed paper with wax coating",Plastic shrink wrap,Single-use tableware for parties and events,High volume of soiled single-use paper waste,Use ceramic or reusable plates for gatherings whenever possible,Wax coating prevents standard paper recycling,35,15,25,30,25
-32,Bambootensile cutlery set,Food & drink,Natural bamboo,Cotton pouch,Portable lightweight reusable cutlery,Can split if soaked or improperly dried,"Hand wash and oil occasionally, to maintain bamboo integrity",Natural organic material that eventually biodegrades,80,70,85,85,85
-33,Single-use wet wipes,Personal care,Synthetic non-woven plastic fibers,Plastic soft pack,Pre-moistened cleansing wipes,Fibers do not break down in plumbing or landfills,Switch to washable cotton cloths and mild soap/water,Causes severe plumbing clogs and microplastic pollution,15,10,20,20,10
-34,Washable organic cotton face rounds,Personal care,100% organic cotton,Mesh laundry bag,Reusable makeup remover and toner pads,Staining or loss of small pads in laundry,Wash in mesh bag and air dry,Replaces hundreds of disposable cotton pads over its lifetime,85,80,85,90,80
-35,Plastic kitchen sponge,Home cleaning,Synthetic polyurethane foam,Cellophane wrap,Abrasive kitchen cleaning sponge,Traps bacteria and degrades into microplastics quickly,Switch to natural cellulose sponges or loofahs,Synthetic foam cannot be recycled,25,30,35,40,20
-36,Natural loofah sponge,Home cleaning,Natural fibrous plant gourd,Paper band,Plant-based biodegradable dish scrubber,Wears down with heavy scrubbing,Sanitize regularly in boiling water and home compost when worn out,Completely natural and zero plastic waste,95,65,90,80,95
-37,Conventional LED light bulb,Household,"Glass, aluminum, and electronics",Cardboard box,Standard energy-efficient home light bulb,Premature burnout from power surges or poor heat sinking,Use quality fixtures and proper disposal at e-waste centers,Contains electronics and small amounts of solder,60,70,75,85,50
-38,Repairable modular LED bulb,Household,Aluminum heatsink and replaceable LED module,Recycled paper box,Bulb designed so LED driver or board can be swapped,Requires basic twist-lock disassembly,Extends fixture life and lowers electronic waste,Higher manufacturing precision needed,75,85,85,90,80
-39,Single-use bubble mailer,Bags,Plastic film bonded to paper,None,Mailer envelope for shipping items,Impossible to separate plastic film from paper for recycling,Save and reuse mailers or switch to paper-only padded mailers,Composite material goes straight to landfill,20,15,30,30,15
-40,All-paper honeycomb mailer,Bags,Kraft paper with internal cushioning structure,Paper band,Fully recyclable padded shipping envelope,Paper can tear if exposed to heavy rain,Reuse when possible and recycle with paper waste,100% paper-based circular recycling stream,85,60,85,75,90
-41,Plastic ice cube tray,Home cleaning,Flexible polyethylene plastic,Paper sleeve,Tray for freezing water into ice cubes,Plastic becomes brittle and cracks over time,Switch to stainless steel or silicone ice trays,Flexible plastic eventually breaks into fragments,40,50,60,70,45
-42,Stainless steel ice cube tray,Home cleaning,Food-grade stainless steel,Cardboard box,Durable metal tray with lever release mechanism,Can be slightly harder to release ice initially,Lasts a lifetime and freezes water quickly,Infinitely recyclable metal with zero plastic degradation,90,95,90,90,95'''
+1,Disposable PET water bottle,Drinkware,PET plastic,Single-use plastic bottle,Convenient single-use water container,Repeated single-use packaging,Refill from safe drinking water or use a durable bottle,Reusable alternatives require repeated use and cleaning,35,25,20,25,35
+2,Reusable stainless steel bottle,Drinkware,Stainless steel,Minimal cardboard box,Durable bottle designed for repeated daily hydration,Can be underused or lost if not carried daily,Use consistently for hundreds of refill cycles,Higher initial manufacturing footprint requires long use,65,85,80,90,65
+3,Reusable borosilicate glass bottle,Drinkware,Borosilicate glass and silicone sleeve,Recycled cardboard box,Pure taste reusable bottle for home or desk use,Breakage can shorten functional lifespan,Use in low-impact settings and protect with silicone sleeve,Heavier transport weight and drop fragility,70,70,75,80,70
+4,Single-use plastic shopping bag,Bags,Thin LDPE plastic film,None,Lightweight grocery carrier bag,Often discarded after a single trip and tangles sorting machines,Reuse existing bags and refuse thin single-use film bags,Reusable totes require many trips to offset production,25,20,30,25,25
+5,Reusable organic cotton tote,Bags,Unbleached organic cotton,Paper tag,Washable multi-purpose shopping bag,Accumulating too many unused tote bags in drawers,Keep two bags handy and reuse weekly for years,Cotton cultivation is water and land intensive,55,75,75,80,60
+6,Recycled-content kraft paper bag,Bags,Post-consumer recycled kraft paper,None,Paper carrier with high recycled fiber content,Tears easily when wet or overloaded,Reuse as a bin liner or gift wrap before paper recycling,Higher pulp energy footprint than thin film if used once,70,45,65,50,75
+7,Disposable lined coffee cup,Food & drink,Paperboard with PE plastic lining,Stack sleeve,Takeaway hot beverage cup used for one drink,Plastic lining prevents standard paper mill pulping,Bring a personal tumbler or choose dine-in ceramic mugs,Washing reusable cups uses hot water and soap,45,20,20,25,35
+8,Insulated reusable coffee tumbler,Food & drink,Double-wall stainless steel,Cardboard sleeve,Vacuum-insulated cup for takeaway drinks,Forgotten at home or lid seal wears out,Store near keys and choose brands selling replacement seals,Requires 20 to 30 uses to break even on steel production,65,80,75,85,60
+9,Conventional plastic toothbrush,Personal care,Virgin polypropylene and nylon bristles,Plastic blister pack,Standard manual toothbrush replaced every three months,Entire heavy plastic handle is landfilled four times a year,Switch to replaceable-head or compostable bamboo handles,Mixed plastic and nylon cannot be curbside recycled,35,45,45,55,30
+10,Replaceable-head manual toothbrush,Personal care,Aluminum or bio-plastic handle with snap head,Compact paper box,Reusable handle where only the bristle head is swapped,Replacement heads still generate small mixed waste,Keep handle for years and snap in compatible refill heads,Must verify long-term availability of refill heads,60,75,70,80,55
+11,Disposable trigger spray cleaner,Home cleaning,HDPE bottle with mixed-material trigger,Shrink label,Ready-to-use liquid surface cleaner,Metal spring inside trigger ruins plastic recycling and ships 95% water,Reuse the trigger sprayer with concentrated refill tablets,Concentrates require accurate home dilution,35,50,25,45,35
+12,Refillable glass spray bottle with tablets,Home cleaning,Tempered glass and reusable trigger,Compostable tablet wrapper,Permanent spray bottle paired with dissolvable cleaning tabs,Drop hazard on tile floors if protective base is removed,Dissolve compact tablets in tap water to eliminate bottle shipping,Glass bottle has higher initial embodied energy,55,75,65,80,55
+13,Standard wire-bound notebook,Stationery,Bleached paper and PVC-coated wire,Plastic shrink wrap,Spiral-bound notebook for lectures and notes,Partially used notebooks are discarded and wire blocks recycling,Fill all pages on both sides and remove wire before recycling,Spiral binding is convenient but complicates pulping,65,55,70,65,65
+14,Refillable disc-bound or ring notebook,Stationery,Recycled poly cover and loose-leaf paper,Paper band,Modular notebook allowing pages to be added and rearranged,Loose refill packs may still come in plastic film,Buy recycled paper refills and archive completed subject sheets,Binder mechanism only pays off if cover is kept for years,60,80,75,85,65
+15,Non-repairable moulded charging cable,Electronics,PVC jacket and copper wire,Blister pack,Standard USB charging cord with fixed strain relief,Fraying near the connector forces disposal of the whole copper cord,Use spring strain-relief protectors or modular magnetic cables,Cheap cables fail rapidly and create hazardous e-waste,40,30,45,70,25
+16,Modular repairable braided USB cable,Electronics,Recycled nylon braid and screw-fit connectors,Kraft box,Durable cable designed with replaceable terminal heads,Higher upfront cost and slightly bulker connector housing,Swap only the worn connector tip instead of the entire wire,Requires basic precision screwdriver for module swaps,60,80,75,85,65
+17,Fast-fashion polyester t-shirt,Clothing,Virgin polyester knit,Polybag mailer,Low-cost synthetic graphic shirt,Sheds microfibers in laundry and loses shape after a few washes,Wash in a microfiber filter bag and buy durable natural fibers,Synthetic blends are nearly impossible to textile-recycle,35,40,35,45,30
+18,Heavyweight repairable cotton shirt,Clothing,Organic combed cotton,Paper twine tag,Classic-fit garment built with reinforced seams for multi-year wear,Can still be discarded early due to staining or fit changes,Mend small tears and over-dye faded fabric to extend wear life,Higher upfront price and water footprint during farming,55,75,70,85,50
+19,Single-use black plastic meal box,Food containers,Polypropylene with carbon black pigment,Plastic bag,Takeaway restaurant container used for a single meal,Optical recycling sorters cannot detect carbon-black plastic,Request stainless tiffin pickup or reuse clean tubs for storage,Reusable containers require carrying and washing,30,25,20,30,30
+20,Stainless steel leak-proof tiffin box,Food containers,304 food-grade stainless steel and silicone ring,Cardboard box,Multi-tier or latch meal container built for decades of lunches,Silicone gasket can loosen if stretched during washing,Keep spare gasket rings and use daily for campus or office meals,Cannot be used in microwave ovens,65,85,80,90,70
+21,Single-use alkaline AA batteries,Household,Zinc manganese dioxide and steel casing,Plastic blister card,Primary non-rechargeable cells for remotes and gadgets,Frequent purchases and toxic heavy metal leakage if landfilled,Replace with low-self-discharge NiMH rechargeables in active devices,Alkalines have lower upfront cost for emergency flashlights,40,40,50,45,35
+22,Rechargeable NiMH battery set,Household,Nickel-metal hydride chemistry,Recycled pulp carton,Cells rated for 500 to 1000 recharge cycles,Underutilization if left idle in drawers without a smart charger,Pair with an auto-cutoff smart charger and rotate across devices,Higher initial purchase cost and requires e-waste drop-off at end of life,55,80,70,85,55
+23,Plastic-wrapped liquid body wash,Personal care,HDPE bottle and dispensing pump,Plastic shrink seal,Liquid soap consisting mostly of water in heavy plastic,Pump springs prevent recycling and bottles accumulate rapidly,Switch to unpackaged bar soap or bulk refill stations,Liquid soap is convenient for shared gym showers,55,60,35,70,55
+24,Paper-wrapped cold-process soap bar,Personal care,Saponified plant oils and recycled paper,Uncoated paper band,Concentrated solid cleansing bar with zero plastic waste,Mushy bar wear if left sitting in standing water,Store on a slotted draining dish to double bar longevity,Some hard-water areas leave soap scum with natural bars,60,60,75,70,65
+25,Fast-fashion stretch denim jeans,Clothing,Cotton and elastane synthetic blend,Plastic tag and polybag,Trend-cut jeans with synthetic stretch fibers,Elastane ruins cotton fiber recycling and heavy dye pollutes water,Air out between wears and wash cold to preserve fiber elasticity,Stretch comfort comes at the cost of end-of-life recyclability,45,60,70,75,40
+26,Thrifted 100% cotton vintage denim,Clothing,Pre-owned cotton denim,Minimal thrift tag,Secondhand heavyweight jeans with zero new manufacturing impact,Crotch or hem wear may require basic tailor darning,Reinforce high-wear seams at a local tailor to wear for another decade,Finding exact sizing in secondhand markets takes patience,90,85,90,95,85
+27,Disposable plastic twin-blade razor,Personal care,Polystyrene handle and steel strips,Blister pack,Single-piece shaving razor discarded after a few shaves,Fused plastic and sharp steel cannot be separated for recycling,Switch to a lifetime brass or stainless safety razor,Extremely cheap upfront but costly and wasteful over a year,20,30,25,30,20
+28,Solid metal double-edge safety razor,Personal care,Chromed brass or stainless steel,Cardboard box,Lifetime shaving handle using recyclable bare steel blades,Blades require safe storage in a metal blade bank before recycling,Collect used blades in a sealed tin for scrap metal recovery,Requires a gentle angle and short learning curve,85,95,90,90,95
+29,Glued wired over-ear headphones,Electronics,ABS plastic copper and PU leather,Plastic window box,Budget audio headphones with non-removable cord and pads,Flaking ear pads or a tugged wire ruins the whole headset,Choose headsets with standard 3.5mm jacks and snap-on cushions,Glued enclosures make DIY soldering repairs difficult,45,60,60,75,45
+30,Modular repairable studio headphones,Electronics,Aluminum spring steel and replaceable modules,Recycled pulp box,Headphones engineered with plug-in cables and twist-lock ear pads,Higher initial price for precision modular connectors,Replace worn ear cushions or audio cords in seconds without tools,Slightly heavier frame due to metal fasteners,75,90,85,90,85
+31,Wax-coated disposable paper plates,Food containers,Bleached paperboard with wax or PE film,Plastic shrink wrap,Single-use party plates discarded after one meal,Food grease and plastic coating contaminate paper recycling bins,Keep a stack of lightweight steel or melamine plates for events,Requires dishwashing after group gatherings,35,15,25,30,25
+32,Bamboo travel cutlery set,Food & drink,Moso bamboo and cotton roll pouch,Paper tag,Lightweight spoon fork and chopsticks for lunch bags,Bamboo can split if soaked in boiling water or dishwashers,Hand wash promptly and rub with food-safe oil every few months,Slightly thicker mouthfeel than thin metal cutlery,80,70,85,85,85
+33,Single-use plastic wet wipes,Personal care,Polyester and polypropylene non-woven fibers,Foil-lined plastic flow pack,Moistened cleansing cloths marketed for quick cleanup,Shed microplastics and cause massive sewer fatbergs when flushed,Use washable cotton flannel cloths with a small water spritzer,Washable cloths require laundry bag washing,15,10,20,20,10
+34,Washable organic cotton face rounds,Personal care,Two-ply organic cotton flannel,Cotton mesh laundry bag,Reusable pads for toner and makeup removal,Small rounds can get lost inside washing machine seals,Always zip rounds inside the mesh laundry bag before washing,Requires air drying to prevent shrinkage,85,80,85,90,80
+35,Synthetic polyurethane kitchen sponge,Home cleaning,Polyurethane foam and nylon scouring pad,Cellophane wrap,Two-sided dish scrubber replaced every few weeks,Nylon green pad sheds microplastics directly into sink drains,Switch to plant cellulose sponges and coconut coir scrubbers,Synthetic foam is cheap but non-recyclable and fossil-derived,25,30,35,40,20
+36,Compostable loofah and coir dish scrubber,Home cleaning,Dried Luffa aegyptiaca plant fiber,Paper belly band,Zero-plastic plant sponge that expands when wet,Wears down faster on cast iron than metal chainmail,Boil weekly to sanitize and cut into pieces for home compost at end of life,Slightly stiffer texture until softened in warm water,95,65,90,80,95
+37,Standard potted LED light bulb,Household,Polycarbonate diffuser aluminum and potted driver,Cardboard carton,Energy-saving household lamp with sealed base,Capacitor failure kills the bulb while the LED chips are still good,Use in ventilated fixtures and drop dead bulbs at e-waste bins,Potted resin prevents component-level repair,60,70,75,85,50
+38,Modular replaceable-driver LED bulb,Household,Aluminum heatsink and snap-in driver module,Recycled kraft box,Circular light bulb where the electronic driver clicks out for swap,Limited retail availability outside circular design brands,Replace only the failed driver module while keeping the heatsink,Higher upfront cost per luminaire,75,85,85,90,80
+39,Plastic-lined paper bubble mailer,Bags,Kraft paper bonded to LDPE bubble film,Peel-and-seal strip,Padded shipping envelope for e-commerce orders,Fused plastic bubble lining makes neither material recyclable,Reuse intact mailers for outbound parcels by taping over the flap,Lightweight postage but guaranteed landfill waste,20,15,30,30,15
+40,All-paper honeycomb padded mailer,Bags,FSC kraft paper with expandable honeycomb core,Water-activated paper tape,100% paper protective shipping envelope,Slightly thicker wall profile and vulnerable to heavy rain,Flatten and place directly in curbside paper recycling after reuse,Slightly heavier than air-filled plastic film,85,60,85,75,90
+41,Brittle polypropylene ice cube tray,Home cleaning,Rigid polypropylene plastic,Polybag sleeve,Freezer tray that twists to release ice cubes,Plastic embrittles at sub-zero temperatures and snaps within a year,Upgrade to food-grade silicone or lever-release stainless steel,Low upfront price leads to repeated replacement cycles,40,50,60,70,45
+42,Stainless steel lever ice cube tray,Home cleaning,18/8 stainless steel,Kraft box,Lifetime metal freezer tray with mechanical ice-crack lever,Metal handle feels very cold to bare hands straight from freezer,Freeze faster due to metal conductivity and keep for decades,Higher upfront investment than moulded plastic,90,95,90,90,95
+43,Recycled copper insulated bottle,Drinkware,Pure copper with lacquer-free interior,Jute pouch,Ayurvedic-inspired durable water vessel for room-temperature storage,Acidic juices react with bare copper if misused,Use strictly for plain water and polish naturally with lemon and salt,Not insulated for hot coffee or boiling liquids,80,90,85,85,90
+44,Collapsible food-grade silicone cup,Drinkware,Platinum-cured silicone and PP rim,Small paper box,Pocket-sized folding cup for commuters and hikers,Silicone can retain strong coffee aromas over time,Soak in baking soda solution monthly to refresh silicone,Requires a rigid grip ring to prevent squeezing spills,70,80,80,85,65
+45,Single-use polystyrene foam cup,Drinkware,Expanded polystyrene #6 foam,Plastic sleeve stack,Insulated disposable cup for street tea and coffee,Breaks into wind-blown foam beads that never biodegrade,Carry a pocket steel tumbler or request clay kulhad cups,Zero washing needed but severe ecological persistence,10,10,15,15,10
+46,Double-wall ceramic travel mug,Drinkware,Kiln-fired ceramic and silicone press lid,Cardboard cylinder,Reusable mug offering cafe ceramic feel on the go,Dropping on pavement shatters the ceramic body,Use for desk and car commutes rather than rugged trekking,Heavier and more fragile than stainless steel,75,70,80,80,75
+47,Plant-based PLA cold drink cup,Drinkware,Polylactic acid corn bio-resin,Bio-film sleeve,Clear cup marketed as biodegradable plastic,Requires 60C industrial composting and contaminates PET recycling,Use washable tumblers instead of single-use bio-plastics,Looks identical to PET so consumers sort it into the wrong bin,40,20,35,25,30
+48,Titan-grade ultralight camping mug,Drinkware,Grade-1 titanium,Mesh storage sack,Corrosion-proof lifetime mug for outdoor and hostel use,High smelting energy footprint if only used once a year,Use daily at home as well as on treks to maximize utility,Expensive raw material refinement,75,95,85,90,90
+49,Upcycled sailcloth or banner backpack,Bags,Reclaimed PVC billboard or Dacron sailcloth,None,Weatherproof commuter pack cut from diverted event banners,Heavy duty stitching or zipper sliders may wear first,Lubricate zippers and repair sliders at a local cobbler,Each bag has unique graphics and stiffer drape,90,85,95,90,75
+50,Jute burlap market sack,Bags,Natural golden jute bast fiber,Cotton string tie,Breathable heavy-duty sack for vegetables and grains,Coarse fibers can shed lint and absorb spills if wet,Shake out dry soil and line with a washable cotton cloth,Cannot be machine washed on harsh cycles,85,75,90,80,90
+51,Virgin nylon drawstring gym bag,Bags,Thin 210D virgin nylon and polyester cord,Polybag,Promotional event cinch sack,Thin corners rip around metal grommets within months,Reinforce corner grommets with fabric patches or use canvas totes,Petrochemical fabric with low tear resistance,30,35,30,45,25
+52,Waxed canvas messenger bag,Bags,Heavy cotton duck and beeswax coating,Paper hangtag,Water-resistant laptop and book bag that ages with patina,Wax coating thins out at crease lines over years of rain,Re-rub with a beeswax block every two years for lifetime waterproofing,Heavier empty weight than synthetic nylon packs,80,90,85,90,85
+53,Washable organic cotton produce mesh bags,Bags,Unbleached organic cotton net,Recycled paper band,Lightweight drawstring sacks replacing supermarket plastic produce rolls,Drawstring cord can tangle in washing machines,Tie cords in a knot before cold washing and air dry flat,Tare weight is slightly higher at checkout scales,85,85,90,90,85
+54,Single-use metallized snack pouch,Food & drink,Multi-layer BOPP plastic and aluminum vapor coat,Carton case,Shiny chip and namkeen wrapper,Fused plastic and micron-thin metal cannot be separated by recyclers,Buy dry snacks in bulk jars or return clean multi-layer wrappers to collection drives,Superior moisture barrier but zero curbside recyclability,15,15,15,20,10
+55,Permanent stainless steel coffee filter,Food & drink,Fine-mesh 304 stainless steel,Small kraft box,Cone drip filter replacing thousands of paper filters,Fine coffee oils can clog micro-mesh holes over time,Simmer in water and vinegar every month to descale micro-pores,Lets more natural coffee oils through than bleached paper,85,95,90,95,90
+56,Single-use plastic boba and juice straw,Food & drink,Virgin polypropylene #5,Paper or film wrapper,Disposable drinking tube used for 15 minutes,Too light and narrow for mechanical recycling screens,Carry a wide-bore steel or glass straw with a cleaning brush,Convenient for thick drinks but high marine litter risk,15,10,20,15,15
+57,Borosilicate glass and steel straw kit,Food & drink,304 steel and tempered glass with sisal brush,Cotton pouch,Reusable drinking straws for smoothies and iced coffee,Uncleaned residue inside tube if brushed infrequently,Rinse immediately after smoothies and use the sisal bristle brush,Glass variant can chip if dropped on granite counters,80,85,85,85,85
+58,Aluminum beverage can,Food & drink,Recycled and virgin aluminum alloy with thin epoxy liner,Cardboard six-pack holder,Chilled beverage container with high scrap value,Crushed cans littered outdoors or mixed with food waste,Empty completely and place in dry metal recycling for infinite smelting,Requires bauxite mining if not recovered in closed loop,75,45,70,40,90
+59,Returnable glass milk or soda bottle,Food & drink,Thick soda-lime flint glass,Reusable plastic crate,Deposit-return bottle sanitized and refilled up to 40 times,Broken or unreturned bottles negate the heavy glass footprint,Always return empty bottles to the dairy or vendor crate promptly,Heavy local transport weight requires short delivery loops,85,90,95,95,90
+60,Bamboo handle toothbrush,Personal care,Moso bamboo handle and castor-oil nylon bristles,Kraft paper box,Compostable-handle toothbrush reducing plastic bathroom waste,Mold on handle base if kept inside a wet enclosed toothbrush cup,Air dry upright and snap off bristle head with pliers before composting handle,Bristles still require separate disposal in most regions,80,65,90,75,80
+61,Refillable silk dental floss in glass dispenser,Personal care,Ahimsa silk or corn PLA floss in glass vial,Paper refill box,Zero-plastic tooth flossing dispenser with metal cutter lid,Losing the small glass dispenser before finishing refills,Keep dispenser in bathroom cabinet and buy 2-pack spool refills,Natural silk floss is slightly thicker between tight teeth,80,85,85,85,85
+62,Concentrated solid shampoo bar,Personal care,Syndet coconut surfactants and plant butters,Recycled paperboard box,Waterless hair cleanser equivalent to two 250ml plastic bottles,Softens rapidly if left under direct shower spray,Cut bar in half and store on a dry cedar soap deck outside spray,Adjustment period for hair used to heavy silicone liquids,85,80,95,85,95
+63,Medical-grade silicone menstrual cup,Personal care,Platinum-cured medical silicone,Unbleached cotton pouch,Reusable period care device lasting up to 10 years,Improper sizing or boiling in an unattended pot can damage silicone,Sterilize in a dedicated mug with boiling water between cycles,Replaces over 2400 single-use plastic-lined pads or tampons,90,95,90,95,80
+64,Washable bamboo-cotton charcoal pads,Personal care,Organic cotton bamboo fleece and PUL waterproof layer,Paper band,Snap-on reusable sanitary pads for 3 to 5 years of use,Hot dryer heat degrades the thin waterproof PUL backing,Soak in cold water first before washing and line dry in sunlight,Requires cold-water soaking and laundry routine,85,85,90,90,75
+65,Aluminum tube toothpaste with metal key,Personal care,Pure aluminum collapsible tube and PP cap,Paperboard carton,Recyclable metal paste tube replacing multi-layer plastic laminate tubes,Rolling without a key leaves 15% of paste trapped in corners,Use a reusable metal tube-wringer key to extract every drop before metal recycling,Cap is still small plastic that must be separated,75,70,80,80,85
+66,Concentrated laundry detergent sheets,Home cleaning,PVA water-soluble film and plant surfactants,Flat cardboard envelope,Pre-measured featherweight laundry strips with zero plastic jug waste,Moisture in humid bathrooms can fuse sheets together,Store envelope in a dry tin and tear half-sheets for small loads,Cuts shipping weight by 90% compared to liquid jugs,80,75,95,85,85
+67,Swedish cellulose dishcloth,Home cleaning,70% FSC wood cellulose and 30% cotton fiber,Paper label,Super-absorbent washable sponge cloth replacing 15 paper towel rolls,Stiffens when dry and tears if wrung aggressively while brittle,Wet before flexing and boil or top-rack wash weekly to sanitize,Home compostable once worn out after 6 to 9 months,90,80,90,90,95
+68,Organic New Zealand wool dryer balls,Home cleaning,100% felted sheep wool,Cotton drawstring bag,Reusable laundry tumblers that shorten drying time and replace chemical sheets,Over-drying can cause static if removed too late,Add two drops of essential oil and recharge wool in sunlight monthly,Lasts for over 1000 laundry loads with zero synthetic film waste,90,95,90,95,95
+69,Coconut coir bottle and pan brush,Home cleaning,Untreated coconut husk bristles and galvanized wire handle,Paper tag,Stiff natural bristle scrubber made from agricultural husk waste,Wooden handle end can crack if left submerged in sink water,Hang by the wire loop to air dry after scrubbing pots,Wire core is recyclable steel while bristles biodegrade,90,75,95,85,90
+70,Concentrated floor cleaner refill pod,Home cleaning,Water-soluble film pod or glass ampoule,Small paper box,Ultra-concentrated mopping solution diluted in an existing bucket,Over-dosing if mixed without measuring water volume,Drop one pod into a 4-liter reusable bottle and shake gently,Eliminates heavy 2-liter HDPE floor cleaner bottles,80,80,90,85,85
+71,Refillable aluminum fountain pen,Stationery,Anodized aluminum body and steel nib,Tin or cardboard case,Precision writing instrument filled from bottled ink via converter,Ink dries in nib feed if left uncapped or unused for months,Flush nib with lukewarm water every two months and use bottled ink,Eliminates hundreds of disposable plastic ballpoint barrels,85,95,85,95,90
+72,Plantable seed paper woodless pencil,Stationery,Recycled compressed newspaper and graphite core with seed capsule,Kraft sleeve,Pencil rolled from waste paper that sprouts herbs when the stub is planted,Chewing the end ruins the gelatin seed capsule,Sharpen gently and plant the final 3cm stub in moist potting soil,Slightly softer outer barrel than cedar wood if soaked,90,70,95,80,95
+73,Refillable glass-body whiteboard marker,Stationery,Glass barrel replaceable felt nib and liquid ink dropper,Recycled cardboard box,Classroom and seminar marker designed for 50+ ink refills,Felt tip frays if pressed too hard on rough boards,Refill with 5 drops of pigment ink and swap the felt nib when worn,Prevents thousands of dry PP marker tubes in colleges,85,90,85,90,85
+74,100% post-consumer recycled A4 printer paper,Stationery,De-inked post-consumer waste paper bleached without chlorine,Paper ream wrapper,Uncoated archival sheet paper for academic reports and notes,Single-sided printing wastes 50% of fiber capacity,Set default printer settings to duplex double-sided mode and draft quality,Slightly warmer off-white shade than virgin tree pulp paper,85,65,85,75,90
+75,Solid brass mechanical drafting pencil,Stationery,Machined brass barrel and steel clutch mechanism,Kraft tube,Weighted engineering drawing pencil built to last an entire career,Thin 0.5mm lead snaps if drop-shocked onto concrete,Use replaceable eraser plugs and standard graphite lead tubes,Zero plastic waste across decades of CAED and engineering studio work,85,95,90,95,95
+76,High-efficiency GaN multi-port USB-C charger,Electronics,Gallium nitride semiconductors and recycled PC shell,Paperboard box,Compact 65W charger that powers both laptop and phone simultaneously,Buying separate bricks for every gadget multiplies e-waste,Consolidate laptop tablet and phone charging into one GaN brick with detachable cables,Higher component density requires certified e-waste recovery at end of life,70,85,85,95,70
+77,User-repairable modular smartphone concept,Electronics,Recycled aluminum frame and screw-mounted camera/battery modules,Slim kraft box,Smartphone engineered with a single Phillips screwdriver and spare part store,Software bloat or cracked screen without a tempered glass protector,Swap a degraded battery or USB port in 5 minutes using official spare modules,Slightly thicker bezel than glued waterproof flagship phones,80,90,90,95,85
+78,Hand-crank and solar emergency radio torch,Electronics,Monocrystalline solar cell dynamo crank and LiFePO4 cell,Cardboard box,Off-grid LED lantern and radio requiring zero disposable batteries,Leaving battery at 0% charge for years in a damp closet,Expose to window sunlight once a month to keep the internal cell healthy,LiFePO4 chemistry offers 2000+ cycles without cobalt,75,85,80,85,75
+79,Recycled-plastic ergonomic wireless mouse,Electronics,85% post-consumer recycled ABS and optical sensor,FSC paper pulp tray,Repairable office mouse with accessible switches and single AA NiMH slot,Micro-switch double-click wear after millions of clicks,Use a rechargeable AA cell instead of sealed pouch batteries and clean scroll wheel dust,Easy battery removal makes e-waste recycling much safer,75,80,85,85,75
+80,Refurbished enterprise-grade laptop,Electronics,Mag-alloy chassis with upgradeable SO-DIMM RAM and NVMe slots,Recycled brown shipping box,Second-life workstation laptop tested and upgraded for engineering studies,Battery wear after 3 to 4 years of heavy compilation and CAD,Upgrade RAM and SSD modularly and swap the clip-in battery rather than buying a new laptop,Avoids 250+ kg of mining and manufacturing CO2 emissions,90,90,90,95,85
+81,Recycled-wool repairable winter sweater,Clothing,80% mechanically shredded post-consumer wool and 20% nylon,Paper twine bundle,Warm knit pullover spun from sorted pre-colored wool sweaters,Moth damage or elbow thinning over winters,Store with cedar blocks and add suede or darning patches on elbows,No new dye water needed when sorted by color before re-spinning,85,85,90,85,80
+82,Natural cork and recycled-rubber wallet,Clothing,Harvested Portuguese oak bark cork fabric,Kraft sleeve,Vegan leather-alternative billfold harvested without cutting down trees,Over-stuffing card slots can stretch stitching,Wipe clean with a damp cloth and avoid machine washing,Cork oak trees absorb more CO2 after bark harvesting regeneration,90,80,90,85,90
+83,Resoleable Goodyear-welt leather boots,Clothing,Vegetable-tanned leather and stitched rubber lug sole,Unbleached shoebox,Footwear where the worn outsole can be unstitched and replaced by a cobbler,Leather cracks if dried near heaters after monsoon rain,Condition with natural wax twice a year and resole at a local cobbler every 4 years,Initial break-in period and higher price than cemented foam sneakers,80,95,85,95,85
+84,Cemented fast-fashion foam sneakers,Clothing,Fused EVA foam polyurethane mesh and rubber glue,Glossy laminated box,Lightweight athletic-style shoes with permanently glued soles,Midsole foam compresses flat in 8 months and cannot be resoled or separated,Reserve for gym floors and donate gently worn pairs before foam hydrolysis,Multi-material glue bonds make sneaker recycling nearly impossible,30,35,45,50,20
+85,Linen-hemp breathable summer shirt,Clothing,55% industrial hemp and 45% flax linen,Compostable cornstarch bag,Bast-fiber woven shirt grown with minimal water and zero pesticides,Creases naturally if spun on high washing machine RPM,Wash on gentle cycle and hang dry damp to smooth wrinkles without heavy ironing,Softens with every wash and is 100% biodegradable if unblended,90,85,85,85,90
+86,Beeswax or plant-wax food wrap,Food containers,Organic cotton infused with beeswax jojoba oil and pine resin,Paper envelope,Moldable breathable wrap replacing plastic cling film for bowls and fruit,Melts if washed in hot water or wrapped around steaming hot food,Rinse in cool water with mild soap and refresh wax in a low oven after a year,Not suitable for raw meat storage due to cool-water washing,85,75,95,85,95
+87,Platinum silicone stretch bowl lids,Food containers,100% food-grade platinum silicone,Cardboard card,Elastic lids that seal leftover bowls mugs and cut melons without cling wrap,Punctures if stretched over sharp knife blades,Dry bowl rims before stretching lid to create an airtight suction seal,Dishwasher and freezer safe for 10+ years,80,90,85,90,75
+88,Wide-mouth mason and pickle glass jars,Food containers,Soda-lime glass and two-piece tinplate lid,Reused grocery jar,Upcycled pasta or pickle jars used for dry pantry storage and overnight oats,Tin lid inner ring can rust if left wet after washing,Dry metal lids immediately or pair with reusable stainless or plastic screw caps,Zero manufacturing cost when upcycled from kitchen grocery jars,95,90,95,95,90
+89,Single-use aluminum foil food tray,Food containers,Stamped aluminum sheet with paperboard lid,Plastic takeaway bag,Takeaway biryani and baking tray,Heavily grease-stained foil is often rejected by paper and plastic sorters,Scrape food residue clean and scrunch clean foil into a fist-sized ball for metal recovery,High embodied smelting energy wasted if used once and landfilled,55,25,40,30,75
+90,Insulated stainless steel vacuum food flask,Food containers,Double-wall 304 steel with copper thermal lining,Recycled box,Wide-mouth thermal jar keeping soups or rice hot for 8 hours without reheating,Dropping dented outer wall can breach vacuum seal,Pre-warm with boiling water for 2 minutes before packing hot lunch,Saves microwave electricity and eliminates single-use delivery bowls,75,90,85,90,80
+91,Mechanical wind-up kitchen timer,Household,Stainless steel spring gear train and bell housing,Small kraft box,Battery-free clockwork timer for cooking and Pomodoro study sessions,Over-winding past the 55-minute stop pin can jam the spring,Wind fully to 55 minutes first then turn back to your target minute to ring clearly,Zero button-cell battery waste for decades,85,90,85,85,90
+92,Cast iron heirloom skillet,Household,Sand-cast pig iron seasoned with vegetable oil,Corrugated cardboard sleeve,Indestructible cooking pan that improves its non-stick patina over generations,Surface flash rust if soaked in sink water or run through dishwashers,Scrub with warm water dry on stove burner and wipe a drop of oil after use,Replaces 10+ peeled PTFE non-stick pans that leach PFAS chemicals,90,99,90,95,99
+93,PTFE-coated aluminum non-stick pan,Household,Stamped aluminum with fluoropolymer coating,Plastic sleeve and carton,Lightweight frying pan with synthetic slick coating,Coating scratches and peels within 2 to 3 years making the pan unsafe to use,Never use metal utensils or high heat and switch to cast iron or stainless steel,Scrap yards penalize coated aluminum and PFAS production persists in water,35,30,50,55,30
+94,Gravity-fed ceramic & activated-carbon water filter,Household,Stainless steel chambers with replaceable ceramic/coconut carbon candles,Cardboard box,Electricity-free drinking water purifier with zero wastewater reject,Ceramic candle pores clog if not lightly scrubbed in muddy water seasons,Scrub ceramic outer shell gently every month and replace only the carbon core yearly,Saves 3 liters of RO reject wastewater per liter of drinking water,85,90,85,95,85
+95,Plastic pitcher filter with sealed cartridges,Household,SAN plastic jug and ultrasonic-welded PP filter pods,Glossy box and polybags,Countertop water pitcher requiring monthly sealed plastic cartridge swaps,Each sealed pod traps ion-exchange resin inside non-recyclable polypropylene housing,Choose refillable loose-granule filter cartridges or stainless gravity filters,Low jug price locks users into high-waste monthly plastic cartridges,45,50,40,60,30
+96,Solar outdoor motion pathway light,Household,Polycrystalline solar panel LiFePO4 cell and ABS/aluminum housing,Kraft box,Self-contained garden and hostel walkway light charged by daylight,Cheap epoxy solar coatings yellow and cloud over in harsh UV sun,Tempered glass solar top panel and screw-accessible battery bay extend life to 8+ years,Zero grid electricity draw and easy battery replacement,75,80,80,85,75
+97,Compostable kitchen countertop caddy,Household,Recycled stainless steel with replaceable coconut-carbon lid filter,Kraft box,Odor-sealed bin for collecting fruit peels tea leaves and coffee grounds,Fruit flies if charcoal filter is saturated or bin is unwashed,Empty into community or garden compost bin every 2 days and rinse with soapy water,Diverts 40% of household wet weight away from methane-producing landfills,85,90,85,95,90
+98,Upcycled tire-rubber welcome doormat,Household,Devulcanized or strip-woven scrap car tire rubber,Paper tag,Heavy-duty weatherproof entrance mat diverted from automotive tire piles,Slight rubber smell during the first week if used in unventilated indoor rooms,Place on covered porch or balcony entrance and hose off dirt with water,Gives a 15-year second life to tough vulcanized rubber waste,90,95,95,90,80
+99,Modular screw-together wooden bookshelf,Household,FSC rubberwood or birch plywood with steel hex bolts,Flat-pack kraft carton,Furniture designed to be disassembled and re-tightened across 10+ hostel or apartment moves,Particleboard alternatives crumble at screw holes after a single move,Use solid wood or threaded metal inserts so bolts never strip the wood grain,Flat-pack shipping plus lifetime repairability,85,90,85,90,90
+100,Fast-furniture laminated particleboard desk,Household,Urea-formaldehyde resin woodchips and melamine plastic veneer,Styrofoam corners and shrink film,Low-cost flat-pack desk that swells when wet and strips at cam-locks,Moisture from a spilled glass or moving disassembly snaps the chipboard joints,Reinforce joints with L-brackets or buy secondhand solid wood study tables,Resin-glued woodchips cannot be composted or cleanly recycled,35,30,30,45,25
+101,Refillable piezoelectric kitchen gas lighter,Household,Stainless steel barrel with piezo crystal igniter,Blister card or box,Battery-free spark igniter for gas stoves lasting 30000+ clicks,Disposable plastic butane lighters are landfilled as hazardous pressurized waste,Keep piezo tip dry from curry splatters to maintain strong spark generation,Zero butane gas or battery required for years of daily cooking,85,90,75,95,85
+102,Single-use plastic butane pocket lighter,Household,POM plastic tank steel wheel and pressurized butane,Plastic tray of 50,Cheap disposable flame lighter without refill valve,Non-refillable tank with residual gas is a fire hazard in waste compactors,Switch to a refillable metal butane torch or USB arc/piezo igniter,Over 1.5 billion disposable lighters end up in landfills annually,20,20,25,30,15
+103,Natural terracotta clay water matka,Drinkware,Unfired and kiln-baked porous alluvial clay,Straw cushioning,Traditional evaporative-cooling earthen water pot with tap,Hairline cracks if bumped with metal pots or scrubbed with chemical soap,Clean only with warm water and baking soda and place on a stable iron stand,Cools water naturally without electricity or refrigerants and returns to soil,95,75,95,85,99
+104,Reusable silicone zip-top freezer bag,Food containers,Thick platinum-cured food-grade silicone,Paper sleeve,Washable pinch-seal bag for marinating freezing and travel toiletries,Pinch seal track can trap crumbs if not turned inside-out to wash,Turn inside-out over a glass to dry completely after washing,Replaces 300+ single-use LDPE zip bags per pouch,80,85,85,85,75
+105,Modular repairable power strip with surge fuse,Electronics,Flame-retardant polycarbonate brass busbars and replaceable ceramic fuse,Kraft box,Heavy-duty extension board with standard screws and replaceable surge fuse,Cheap riveted power strips must be thrown away when a ₹5 internal fuse blows,Unscrew the fuse cap to swap a blown glass/ceramic fuse in 60 seconds,Protects expensive laptops while preventing premature e-waste,80,90,85,90,85'''
 
 @st.cache_data
 def load_data():
@@ -677,7 +555,7 @@ def load_data():
     except Exception:
         pass
     df = pd.read_csv(io.StringIO(_FALLBACK_PRODUCTS_CSV))
-    return df, "Loaded built-in errorless dataset (42 products)."
+    return df, "Loaded built-in errorless dataset (105 products)."
 
 df, data_load_notice = load_data()
 
@@ -815,6 +693,7 @@ st.markdown(f"""
     <span class="hero-badge">🔄 <b>{loan_items_count}</b> Tool Library Loans</span>
     <span class="hero-badge">📌 <b>{wishes_count}</b> Active Wishes</span>
     <span class="hero-badge">🛠️ <b>{hubs_count}</b> Repair & E-Waste Hubs</span>
+    <span class="hero-badge">📚 <b>{len(df)}</b> Products in Catalog</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -833,7 +712,7 @@ tab_explore, tab_wish, tab_ai, tab_browse, tab_donate, tab_manage, tab_track, ta
 # -------------------- Tab 1: Product Explorer, Break-Even Calculator & Resin Decoder --------------------
 
 with tab_explore:
-    st.markdown("## 🌿 Explore the Product Lifecycle")
+    st.markdown("## 🌿 Explore the 105-Product Lifecycle Catalog")
     filter_col1, filter_col2, filter_col3 = st.columns([1, 1, 1])
     with filter_col1:
         categories = ["All categories"] + sorted(df["category"].unique().tolist())
@@ -848,7 +727,6 @@ with tab_explore:
     with filter_col3:
         priority = st.selectbox("Your priority", ["Overall sustainability", "Longer lifespan", "Less packaging", "Repairability", "Reuse potential"], key="explore_priority")
 
-    # NEW FEATURE: Interactive Plastic Resin & Recycling Symbol Decoder
     with st.expander("♻️ Interactive Plastic Resin & Packaging Symbol Decoder (#1–#7 & E-Waste)", expanded=False):
         st.caption("Inspect the triangle resin code or symbol stamped on any product or packaging to see its real-world municipal recyclability:")
         selected_resin = st.selectbox("Select Packaging Symbol / Resin Code", list(RESIN_DECODER_DATA.keys()), key="resin_decoder_select")
@@ -871,7 +749,7 @@ with tab_explore:
             </div>
             """, unsafe_allow_html=True)
 
-    search = st.text_input("🔎 Search products by keyword or material", placeholder="Try: bottle, notebook, cable, cleaner, denim...", key="product_search")
+    search = st.text_input("🔎 Search 105+ products by keyword, name, or material", placeholder="Try: bottle, notebook, copper, wool, bamboo, drill...", key="product_search")
     filtered = df.copy()
     if selected_category != "All categories":
         filtered = filtered[filtered["category"] == selected_category]
@@ -889,8 +767,9 @@ with tab_explore:
     if filtered.empty:
         st.info("No matching products. Try another search or category.")
     else:
+        show_limit = st.slider("Number of products to display", min_value=12, max_value=len(filtered), value=min(24, len(filtered)), step=12, key="catalog_display_limit")
         cols = st.columns(3)
-        for idx, (_, row) in enumerate(filtered.head(12).iterrows()):
+        for idx, (_, row) in enumerate(filtered.head(show_limit).iterrows()):
             icon = CATEGORY_ICONS.get(row["category"], "🌱")
             score_val = float(row["eco_score"])
             bar_bg = score_bar_color(score_val)
@@ -988,7 +867,6 @@ with tab_wish:
     st.markdown("## 📌 Community Wish Board & Smart Matchmaker")
     st.write("Post items you need (textbooks, calculators, tools) or see automated matches between community wishes and available donations.")
 
-    # NEW FEATURE: Smart Wish-to-Donation Matchmaker Panel
     live_matches = compute_all_wish_item_matches()
     if live_matches:
         st.markdown("### 🤝 Smart Wish-to-Donation Matchmaker (Live Hits)")
@@ -1246,7 +1124,6 @@ with tab_browse:
     else:
         st.caption("List, lend, or rehome items to earn community badges and unlock your Impact Certificate!")
 
-    # NEW FEATURE: Impact Certificate Exporter
     with st.expander("📜 Generate & Download Your Certificate of Circular Impact", expanded=False):
         st.caption("Export an official, verifiable HTML/printable certificate showcasing your circular economy contributions for student portfolios or NSS/community service logs.")
         cert_col1, cert_col2 = st.columns([1.2, 1.8])
@@ -1330,7 +1207,7 @@ with tab_browse:
                                 cursor = conn.execute("INSERT INTO requests (item_id, requester_name, requester_contact, message, status, created_at) VALUES (?, ?, ?, ?, 'Pending', ?)", (item["id"], req_name.strip(), req_contact.strip(), req_message.strip(), now_iso()))
                                 st.success(f"Request sent! Track ID: REV-R{cursor.lastrowid:05d}")
 
-# -------------------- Tab 5: Donate or Lend an Item (with Smart Wish Matchmaker Alert) --------------------
+# -------------------- Tab 5: Donate or Lend an Item --------------------
 
 with tab_donate:
     st.markdown("## 🎁 Donate Permanently or 🔄 Lend to the Peer Tool Library")
@@ -1373,7 +1250,6 @@ with tab_donate:
                 new_id = cursor.lastrowid
             st.success(f"Listed successfully ({listing_mode_sel})! Listing ID: **REV-{new_id:05d}**. Save your PIN to manage requests.")
 
-            # Instant Wish-to-Donation Matchmaker Check
             instant_matches = find_wish_matches_for_item(item_name.strip(), item_category, item_description.strip())
             if instant_matches:
                 st.markdown("### 🎯 Instant Wish Board Match Detected!")
