@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timezone
 
 st.set_page_config(
-    page_title="REVORA | Enterprise Circular Economy Platform",
+    page_title="REVORA | Ultimate Enterprise Circular Platform",
     page_icon="🌱",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -114,7 +114,6 @@ RESIN_DECODER_DATA = {
     },
 }
 
-# Coordinate map simulator for Geolocation Proximity Filtering
 AREA_COORDS = {
     "Indiranagar, Bengaluru": (12.9716, 77.6412),
     "Koramangala, Bengaluru": (12.9352, 77.6245),
@@ -134,7 +133,6 @@ def calculate_distance_km(coord1, coord2):
     c = 2 * math.asin(math.sqrt(a))
     return round(6371 * c, 1)
 
-# One-time splash screen
 if not st.session_state.get("revora_splash_seen", False):
     st.session_state["revora_splash_seen"] = True
     st.markdown("""
@@ -214,8 +212,23 @@ def init_db():
             requester_contact TEXT NOT NULL,
             message TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'Pending',
+            handover_slot TEXT DEFAULT 'Not Scheduled',
             created_at TEXT NOT NULL,
             FOREIGN KEY(item_id) REFERENCES items(id)
+        )
+        """)
+        req_cols = [r["name"] for r in conn.execute("PRAGMA table_info(requests)").fetchall()]
+        if "handover_slot" not in req_cols:
+            conn.execute("ALTER TABLE requests ADD COLUMN handover_slot TEXT DEFAULT 'Not Scheduled'")
+
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id INTEGER NOT NULL,
+            sender TEXT NOT NULL,
+            message TEXT NOT NULL,
+            sent_at TEXT NOT NULL,
+            FOREIGN KEY(request_id) REFERENCES requests(id)
         )
         """)
         conn.execute("""
@@ -267,6 +280,30 @@ def init_db():
             created_at TEXT NOT NULL
         )
         """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS bounties (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            poster_name TEXT NOT NULL,
+            item_title TEXT NOT NULL,
+            issue_desc TEXT NOT NULL,
+            reward_credits INTEGER NOT NULL DEFAULT 50,
+            status TEXT NOT NULL DEFAULT 'Open',
+            solver_name TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS eco_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_title TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            location TEXT NOT NULL,
+            event_date TEXT NOT NULL,
+            description TEXT NOT NULL,
+            organizer TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_items_status ON items(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_wishes_status ON wishes(status)")
 
@@ -283,6 +320,17 @@ def init_db():
             conn.executemany(
                 "INSERT INTO repair_hubs (hub_name, hub_type, city_area, services, contact_info, hours, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 default_hubs,
+            )
+
+        existing_events = conn.execute("SELECT COUNT(*) AS n FROM eco_events").fetchone()["n"]
+        if existing_events == 0:
+            default_events = [
+                ("Campus Lake & Quad Cleanup Drive", "Cleanup", "College Tech Park Quad", "2026-11-14 · 08:00 AM", "Join NSS and the Eco Club for our bi-weekly campus plastics and litter cleanup.", "NSS Green Cell", now_iso()),
+                ("Solar & Battery E-Waste Collection Camp", "E-Waste Drive", "Main Gate Reception", "2026-11-20 · 10:00 AM", "Drop off dead lithium batteries, phone chargers, and dead LED bulbs safely.", "GreenCampus Initiative", now_iso()),
+            ]
+            conn.executemany(
+                "INSERT INTO eco_events (event_title, event_type, location, event_date, description, organizer, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                default_events,
             )
 
 init_db()
@@ -451,7 +499,7 @@ def build_impact_certificate_html(person_name, rehomed_cnt, listed_cnt, loan_cnt
 </body>
 </html>"""
 
-def build_svg_handover_pass(item_id, request_id, item_name, location_text, status_text, listing_mode="Permanent Donation", loan_days=0, pod_name="AI/ML Dept"):
+def build_svg_handover_pass(item_id, request_id, item_name, location_text, status_text, listing_mode="Permanent Donation", loan_days=0, pod_name="AI/ML Dept", handover_slot="Not Scheduled"):
     seed_str = f"REVORA-{item_id}-{request_id}-{item_name}"
     digest = hashlib.sha256(seed_str.encode("utf-8")).hexdigest().upper()
     pass_code = f"REV-PASS-{digest[:8]}"
@@ -482,7 +530,7 @@ def build_svg_handover_pass(item_id, request_id, item_name, location_text, statu
                 <span class="pill">🎫 DIGITAL PASSPORT · {safe_text(mode_badge)}</span>
                 <h4 style="margin:.45rem 0 .2rem;">{safe_text(item_name)}</h4>
                 <div class="muted">Listing: <b>REV-{int(item_id):05d}</b> · Pod: <b>{safe_text(pod_name)}</b></div>
-                <div class="muted">📍 Handover Zone: <b>{safe_text(location_text)}</b> · Status: <b>{safe_text(status_text)}</b></div>
+                <div class="muted">📍 Handover Zone: <b>{safe_text(location_text)}</b> · ⏰ Slot: <b>{safe_text(handover_slot)}</b></div>
                 <div style="margin-top:8px;font-family:monospace;font-size:.95rem;font-weight:700;color:#1b6741;background:#eaf4eb;padding:4px 10px;border-radius:8px;display:inline-block;">
                     🔑 {pass_code}
                 </div>
@@ -497,7 +545,7 @@ def build_svg_handover_pass(item_id, request_id, item_name, location_text, statu
     </div>
     """
 
-# -------------------- Global State & Weights (DEFINED EARLY) --------------------
+# -------------------- Global State & Weights --------------------
 
 DEFAULT_WEIGHTS = {
     "material_score": 0.25,
@@ -515,18 +563,22 @@ WEIGHTS = st.session_state["WEIGHTS"]
 
 with st.sidebar:
     st.markdown("## 🌱 REVORA")
-    st.caption("Enterprise Circular Economy")
+    st.caption("Ultimate Enterprise Circular Platform")
     dark_mode = st.toggle("🌙 Midnight Forest Dark Mode", value=False, key="revora_dark_mode")
     st.markdown("---")
-    st.markdown("**✨ Enterprise Suite**")
-    st.write("🌐 **Geo-Proximity** Filtering")
-    st.write("🏢 **Campus Pods** & ESG Dashboard")
-    st.write("🔬 **Material Passports** & QR Codes")
-    st.write("🧰 **Time Banking** Skill Exchange")
-    st.write("🪙 **Eco-Credit** Tokenomics")
-    st.write("🤖 **Multi-Party** Swap Matchmaker")
-    st.write("🧾 **Warranty Locker** & Receipts")
-    st.write("📚 **105-Product** Lifecycle Catalog")
+    st.markdown("**✨ All Features Active**")
+    st.write("🌐 **Geo-Proximity** & Map Pins")
+    st.write("🗓️ **Handover Scheduler** & Time-Slots")
+    st.write("💬 **Secure In-App Chat** & Negotiation")
+    st.write("📊 **Personal Circularity** Dashboard")
+    st.write("🎯 **Zero-Waste Quests** & Challenges")
+    st.write("🧰 **Repair Bounties** & Time Banking")
+    st.write("👗 **Fashion Cost-Per-Wear** Calculator")
+    st.write("🚛 **E-Waste & Battery** Drives")
+    st.write("🏫 **Textbook Exchange** Desk")
+    st.write("⚡ **Appliance Power** Calculator")
+    st.write("🌳 **Eco-Events & Cleanups** Board")
+    st.write("🛍️ **Bulk Co-op** Purchasing")
 
     st.markdown("---")
     with st.expander("🎛️ Customize EcoScore Weights", expanded=False):
@@ -657,11 +709,11 @@ st.markdown(f"""
     .eco-bar-fill {{ height: 100%; border-radius: 999px; transition: width 0.4s ease; }}
 
     div[data-baseweb="tab-list"] {{
-        gap: 6px; background: var(--tab-bar-bg); backdrop-filter: blur(10px);
-        padding: 8px 10px; border-radius: 18px; border: 1px solid var(--card-border); margin-bottom: 1rem;
+        gap: 4px; background: var(--tab-bar-bg); backdrop-filter: blur(10px);
+        padding: 6px 8px; border-radius: 18px; border: 1px solid var(--card-border); margin-bottom: 1rem;
         flex-wrap: wrap;
     }}
-    button[data-baseweb="tab"] {{ border-radius: 12px !important; padding: 8px 12px !important; font-weight: 600 !important; color: var(--tab-text) !important; font-size: 0.9rem !important; }}
+    button[data-baseweb="tab"] {{ border-radius: 10px !important; padding: 6px 10px !important; font-weight: 600 !important; color: var(--tab-text) !important; font-size: 0.82rem !important; }}
     button[data-baseweb="tab"][aria-selected="true"] {{
         background: linear-gradient(135deg, #1b6741 0%, #2d8659 100%) !important; color: #ffffff !important;
         box-shadow: 0 4px 12px rgba(27, 103, 65, 0.28) !important;
@@ -672,7 +724,7 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-# -------------------- 105-Product Embedded Fallback Dataset --------------------
+# -------------------- 105-Product Dataset --------------------
 
 _FALLBACK_PRODUCTS_CSV = '''product_id,product_name,category,material,packaging,description,waste_risk,design_opportunity,tradeoff,material_score,lifecycle_score,packaging_score,usage_score,end_of_life_score
 1,Disposable PET water bottle,Drinkware,PET plastic,Single-use plastic bottle,Convenient single-use water container,Repeated single-use packaging,Refill from safe drinking water or use a durable bottle,Reusable alternatives require repeated use and cleaning,35,25,20,25,35
@@ -859,7 +911,7 @@ def build_svg_radar(primary_row, compare_row=None, is_dark=False):
     </div>
     """
 
-# -------------------- AI & Accessibility Helpers --------------------
+# -------------------- AI Helpers --------------------
 
 def get_gemini_client():
     try:
@@ -903,16 +955,15 @@ def heuristic_greenwash_check(claim_text):
         "better_alternative": "Look for mono-material construction (100% stainless steel, glass, or unbleached kraft paper) or third-party certifications (FSC, GOTS)."
     }
 
-# -------------------- Hero Banner & Live Impact Counter --------------------
+# -------------------- Hero Banner --------------------
 
 with db_connect() as conn:
     donated_count = conn.execute("SELECT COUNT(*) AS n FROM items WHERE status='Donated'").fetchone()["n"]
     available_count = conn.execute("SELECT COUNT(*) AS n FROM items WHERE status='Available'").fetchone()["n"]
     loan_items_count = conn.execute("SELECT COUNT(*) AS n FROM items WHERE listing_mode LIKE '%Lending%'").fetchone()["n"]
     wishes_count = conn.execute("SELECT COUNT(*) AS n FROM wishes WHERE status='Active'").fetchone()["n"]
-    hubs_count = conn.execute("SELECT COUNT(*) AS n FROM repair_hubs").fetchone()["n"]
-    skills_count = conn.execute("SELECT COUNT(*) AS n FROM skill_exchanges WHERE status='Active'").fetchone()["n"]
-    warranties_count = conn.execute("SELECT COUNT(*) AS n FROM warranties").fetchone()["n"]
+    bounties_count = conn.execute("SELECT COUNT(*) AS n FROM bounties WHERE status='Open'").fetchone()["n"]
+    events_count = conn.execute("SELECT COUNT(*) AS n FROM eco_events").fetchone()["n"]
 
 total_waste_diverted_kg = donated_count * 1.5
 total_co2_saved_kg = donated_count * 4.2
@@ -920,56 +971,55 @@ total_co2_saved_kg = donated_count * 4.2
 st.markdown(f"""
 <div class="hero">
   <span class="pill" style="background:rgba(224,245,189,0.22);color:#e6f9d5;border:1px solid rgba(224,245,189,0.4);">
-    🌱 ENTERPRISE CIRCULAR ECONOMY & WASTE-TO-DESIGN INTELLIGENCE
+    🌱 ULTIMATE ENTERPRISE CIRCULAR ECOSYSTEM & REUSE HUB
   </span>
   <h1>REVORA</h1>
   <p>Rethink materials. Reuse what works. Revive everyday objects before they become waste.</p>
   <div class="hero-badges">
     <span class="hero-badge">📊 Impact: <b>{total_waste_diverted_kg:.1f} kg</b> Waste Diverted</span>
     <span class="hero-badge">🌍 Impact: <b>{total_co2_saved_kg:.1f} kg</b> CO₂ Saved</span>
-    <span class="hero-badge">🎁 <b>{available_count}</b> Available Items</span>
-    <span class="hero-badge">🔄 <b>{loan_items_count}</b> Tool Loans</span>
-    <span class="hero-badge">🧰 <b>{skills_count}</b> Skill Exchanges</span>
-    <span class="hero-badge">🧾 <b>{warranties_count}</b> Warranties</span>
+    <span class="hero-badge">🎁 <b>{available_count}</b> Available</span>
+    <span class="hero-badge">🧰 <b>{bounties_count}</b> Repair Bounties</span>
+    <span class="hero-badge">🌳 <b>{events_count}</b> Eco Events</span>
     <span class="hero-badge">📚 <b>{len(df)}</b> Catalog Items</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-tab_explore, tab_wish, tab_ai, tab_browse, tab_donate, tab_manage, tab_track, tab_repair, tab_geo_swap, tab_campus_esg, tab_vault_time = st.tabs([
-    "🌿 Product Explorer",
-    "📌 Wish Board",
+tab_explore, tab_wish, tab_ai, tab_browse, tab_donate, tab_manage, tab_track, tab_repair, tab_geo_swap, tab_campus_esg, tab_vault_time, tab_quests_bounties, tab_fashion_energy, tab_events_coop, tab_textbook_desk = st.tabs([
+    "🌿 Explorer",
+    "📌 Wishes",
     "🤖 AI Studio",
-    "🔎 Browse & Certificates",
-    "🎁 Donate or Lend",
-    "📬 Manage Requests",
-    "📦 Track & Passport",
-    "🛠️ Repair & E-Waste",
-    "🌐 Geo & Multi-Swap",
-    "🏢 Campus Pods & ESG",
-    "🧾 Warranty & Time Bank",
+    "🔎 Browse",
+    "🎁 Donate/Lend",
+    "📬 Manage",
+    "📦 Passport",
+    "🛠️ Repair Hubs",
+    "🌐 Geo & Swap",
+    "🏢 ESG Pods",
+    "🧾 Vault & Time",
+    "🎯 Quests & Bounties",
+    "👗 Fashion & Energy",
+    "🌳 Events & Co-op",
+    "🏫 Textbook Desk",
 ])
 
-# -------------------- Tab 1: Product Explorer, Break-Even & Resin Decoder --------------------
+# -------------------- Tab 1: Product Explorer --------------------
 
 with tab_explore:
     st.markdown("## 🌿 Explore the 105-Product Lifecycle Catalog")
-    filter_col1, filter_col2, filter_col3 = st.columns([1, 1, 1])
-    with filter_col1:
+    fc1, fc2, fc3 = st.columns(3)
+    with fc1:
         categories = ["All categories"] + sorted(df["category"].unique().tolist())
         selected_category = st.selectbox("Product category", categories, key="explore_category")
-    with filter_col2:
-        problem_options = [
-            "Single-use waste builds up", "Breaks before the rest wears out",
-            "Too much product is dispensed or used", "Packaging is excessive",
-            "Product is rarely used", "Hard to recycle or dispose of",
-        ]
+    with fc2:
+        problem_options = ["Single-use waste builds up", "Breaks before the rest wears out", "Too much product is dispensed or used", "Packaging is excessive", "Product is rarely used", "Hard to recycle or dispose of"]
         problem = st.selectbox("Main waste problem", problem_options, key="explore_problem")
-    with filter_col3:
+    with fc3:
         priority = st.selectbox("Your priority", ["Overall sustainability", "Longer lifespan", "Less packaging", "Repairability", "Reuse potential"], key="explore_priority")
 
     with st.expander("♻️ Interactive Plastic Resin & Packaging Symbol Decoder (#1–#7 & E-Waste)", expanded=False):
-        st.caption("Inspect the triangle resin code or symbol stamped on any product or packaging to see its real-world municipal recyclability:")
+        st.caption("Inspect packaging resin codes or symbols:")
         selected_resin = st.selectbox("Select Packaging Symbol / Resin Code", list(RESIN_DECODER_DATA.keys()), key="resin_decoder_select")
         r_info = RESIN_DECODER_DATA[selected_resin]
         rc1, rc2 = st.columns([1.3, 1.7])
@@ -978,15 +1028,15 @@ with tab_explore:
             <div class="result-card">
                 <span class="pill">{safe_text(r_info['verdict'])}</span>
                 <h4 style="margin:.55rem 0 .25rem;">{safe_text(selected_resin)}</h4>
-                <p style="font-size:.9rem;"><b>📦 Common Products:</b> {safe_text(r_info['common_uses'])}</p>
-                <p style="font-size:.9rem;"><b>♻️ Municipal Recyclability:</b> {safe_text(r_info['recyclability'])}</p>
+                <p style="font-size:.9rem;"><b>📦 Common:</b> {safe_text(r_info['common_uses'])}</p>
+                <p style="font-size:.9rem;"><b>♻️ Recyclability:</b> {safe_text(r_info['recyclability'])}</p>
             </div>
             """, unsafe_allow_html=True)
         with rc2:
             st.markdown(f"""
             <div class="marketplace-note">
-                <b>⚠️ Material & Contamination Risk:</b><br>{safe_text(r_info['risk'])}<br><br>
-                <b>🌱 Recommended Circular Swap:</b><br>{safe_text(r_info['swap'])}
+                <b>⚠️ Contamination Risk:</b><br>{safe_text(r_info['risk'])}<br><br>
+                <b>🌱 Circular Swap:</b><br>{safe_text(r_info['swap'])}
             </div>
             """, unsafe_allow_html=True)
 
@@ -1006,7 +1056,7 @@ with tab_explore:
     filtered = filtered.sort_values("rank_score", ascending=False)
 
     if filtered.empty:
-        st.info("No matching products. Try another search or category.")
+        st.info("No matching products.")
     else:
         show_limit = st.slider("Number of products to display", min_value=12, max_value=len(filtered), value=min(24, len(filtered)), step=12, key="catalog_display_limit")
         cols = st.columns(3)
@@ -1039,792 +1089,315 @@ with tab_explore:
         if not chosen_matches.empty:
             chosen = chosen_matches.iloc[0].copy()
             chosen["eco_score"] = score_product(chosen)
-            candidates = df.copy()
-            candidates["eco_score"] = candidates.apply(score_product, axis=1)
-
-            def intervention_for(prob):
-                rules = {
-                    "Breaks before the rest wears out": ("Prioritize a repairable or modular design", "Look for replaceable parts, accessible fasteners, and repair guides."),
-                    "Too much product is dispensed or used": ("Choose controlled-dose or refillable packaging", "A measured dispenser or refill pack reduces overuse."),
-                    "Packaging is excessive": ("Prefer right-sized, concentrated, or refill packaging", "Compare packaging per use—not just package size."),
-                    "Product is rarely used": ("Borrow, share, or keep using what you own", "Test whether sharing or renting solves the need without a new product."),
-                    "Single-use waste builds up": ("Switch to a durable alternative if reuse is frequent", "Compare expected lifetime uses and cleaning needs."),
-                    "Hard to recycle or dispose of": ("Choose simpler materials and a known take-back route", "Prefer clearly labelled materials and check local collection rules."),
-                }
-                return rules[prob]
-
-            title, explanation = intervention_for(problem)
-            sc = candidates[(candidates["category"] == chosen["category"]) & (candidates["product_name"] != chosen["product_name"])].copy()
-            sc["score_gain"] = sc["eco_score"] - float(chosen["eco_score"])
-            recs = sc.sort_values(["eco_score", "score_gain"], ascending=False).head(3)
-
             st.markdown("---")
-            st.markdown("## 🔬 Waste-to-Design Analysis & Radar Comparison")
             st.markdown(f"### {CATEGORY_ICONS.get(chosen['category'], '🌱')} {chosen['product_name']}")
-
             info_col, radar_col = st.columns([1.35, 1])
             with info_col:
                 st.markdown(f"""
                 <div class="marketplace-note">
-                    <b>⚠️ Likely Waste Pattern:</b><br>{safe_text(chosen['waste_risk'])}<br><br>
+                    <b>⚠️ Waste Pattern:</b> {safe_text(chosen['waste_risk'])}<br><br>
                     <b>🧱 Material:</b> {safe_text(chosen['material'])} &nbsp;·&nbsp; <b>📦 Packaging:</b> {safe_text(chosen['packaging'])}
                 </div>
-                <div class="marketplace-note" style="border-left-color:#2e8b57;">
-                    <b>💡 Design Opportunity:</b><br>{safe_text(chosen['design_opportunity'])}<br><br>
-                    <b>⚖️ Key Trade-off:</b> {safe_text(chosen['tradeoff'])}
-                </div>
                 """, unsafe_allow_html=True)
-                st.success(f"**Suggested Design Intervention: {title}** — {explanation}")
-
             with radar_col:
-                compare_options = df[df["product_name"] != chosen["product_name"]]["product_name"].tolist()
-                default_comp = recs.iloc[0]["product_name"] if not recs.empty else compare_options[0]
-                comp_name = st.selectbox("Compare on Radar Chart against:", compare_options, index=compare_options.index(default_comp) if default_comp in compare_options else 0, key="radar_compare_select")
-                comp_row = df[df["product_name"] == comp_name].iloc[0]
-                st.markdown(build_svg_radar(chosen, comp_row, is_dark=dark_mode), unsafe_allow_html=True)
+                st.markdown(build_svg_radar(chosen, is_dark=dark_mode), unsafe_allow_html=True)
 
-            st.markdown("### ⚖️ Break-Even Reuse Calculator")
-            st.caption("Calculate how quickly switching to a durable alternative in this category pays off its manufacturing footprint.")
-            be_uses, co2_g_per_use, weight_g_per_use = BREAKEVEN_PROFILES.get(chosen["category"], (20, 60, 15))
-            calc_col1, calc_col2 = st.columns([1.2, 2])
-            with calc_col1:
-                uses_per_week = st.slider("How many times per week do you use this item?", min_value=1, max_value=35, value=7, key="breakeven_slider")
-                expected_years = st.slider("Expected years you will keep a reusable version", min_value=1, max_value=10, value=2, key="breakeven_years")
-            with calc_col2:
-                weeks_to_breakeven = round(be_uses / max(1, uses_per_week), 1)
-                total_uses_period = uses_per_week * 52 * expected_years
-                net_disposables_avoided = max(0, total_uses_period - be_uses)
-                co2_saved_kg = round((net_disposables_avoided * co2_g_per_use) / 1000.0, 1)
-                waste_saved_kg = round((net_disposables_avoided * weight_g_per_use) / 1000.0, 2)
-
-                b1, b2, b3 = st.columns(3)
-                with b1: st.metric("Break-Even Threshold", f"{be_uses} uses", f"~{weeks_to_breakeven} weeks")
-                with b2: st.metric(f"{expected_years}-Yr Disposables Avoided", f"{total_uses_period:,} units")
-                with b3: st.metric(f"Net Carbon & Waste Saved", f"{co2_saved_kg} kg CO₂", f"{waste_saved_kg} kg waste")
-
-# -------------------- Tab 2: Community Wish Board & Smart Matchmaker --------------------
+# -------------------- Tab 2: Wish Board --------------------
 
 with tab_wish:
     st.markdown("## 📌 Community Wish Board & Smart Matchmaker")
-    st.write("Post items you need (textbooks, calculators, tools) or see automated matches between community wishes and available donations.")
-
     live_matches = compute_all_wish_item_matches()
     if live_matches:
-        st.markdown("### 🤝 Smart Wish-to-Donation Matchmaker (Live Hits)")
-        st.caption("REVORA automatically detected available donations that match active community wishes:")
-        m_cols = st.columns(min(2, len(live_matches)))
-        for idx, pair in enumerate(live_matches):
+        st.markdown("### 🤝 Smart Wish-to-Donation Matchmaker")
+        for pair in live_matches:
             it = pair["item"]
             w = pair["wish"]
-            kw_str = ", ".join(pair["keywords"]) if pair["keywords"] else "Category Match"
-            with m_cols[idx % 2]:
-                st.markdown(f"""
-                <div class="result-card" style="border-left:5px solid #2e8b57;">
-                    <span class="pill">🎯 {pair['score']}% Match · {safe_text(kw_str)}</span>
-                    <h4 style="margin:.45rem 0 .15rem;">Wish: {safe_text(w['wish_name'])}</h4>
-                    <div class="muted">Requested by <b>{safe_text(w['requester_name'])}</b> ({safe_text(w['location'])}) · Contact: <b>{safe_text(w['requester_contact'])}</b></div>
-                    <hr style="border:none;border-top:1px dashed #cce0cb;margin:8px 0;"/>
-                    <div><b>🎁 Matching Listing:</b> {safe_text(it['item_name'])} (<code>REV-{it['id']:05d}</code> · {safe_text(it['listing_mode'])})</div>
-                    <div class="muted">Listed by <b>{safe_text(it['donor_name'])}</b> in {safe_text(it['location'])}</div>
-                </div>
-                """, unsafe_allow_html=True)
-        st.markdown("---")
+            st.info(f"**{pair['score']}% Match:** Wish for **{w['wish_name']}** ({w['requester_name']}) matches available listing **{it['item_name']}** (`REV-{it['id']:05d}`).")
 
     wish_mode = st.radio("Wish Board Actions", ["Browse Wishes", "Post a New Wish"], horizontal=True, key="wish_board_mode")
-
     if wish_mode == "Post a New Wish":
         with st.form("post_wish_form", clear_on_submit=True):
             w1, w2 = st.columns(2)
             with w1:
-                wish_name = st.text_input("What are you looking for? *", placeholder="e.g. Scientific Calculator or 1st Year Engineering Books", max_chars=100)
+                wish_name = st.text_input("What are you looking for? *")
                 wish_cat = st.selectbox("Category *", ["Books & education", "Electronics", "Clothing & shoes", "Home & kitchen", "Toys & games", "Sports & outdoors", "Other"])
-                wish_loc = st.text_input("Your Area / City *", placeholder="e.g. Indiranagar, Bengaluru", max_chars=120)
+                wish_loc = st.text_input("Your Area / City *")
             with w2:
-                req_name = st.text_input("Your Name *", max_chars=80)
-                req_contact = st.text_input("Your Email or Phone *", placeholder="Shown to donors who want to fulfill your wish", max_chars=120)
-            wish_desc = st.text_area("Details / Specifications *", placeholder="Mention model, edition, condition required, or whether borrowing is okay...", max_chars=500)
-            submit_wish = st.form_submit_button("📌 Publish Wish", use_container_width=True)
-
-        if submit_wish:
-            if not all([wish_name.strip(), wish_loc.strip(), req_name.strip(), req_contact.strip(), wish_desc.strip()]):
-                st.error("Please fill in all required fields.")
-            else:
-                with db_connect() as conn:
-                    conn.execute(
-                        "INSERT INTO wishes (wish_name, category, location, description, requester_name, requester_contact, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'Active', ?)",
-                        (wish_name.strip(), wish_cat, wish_loc.strip(), wish_desc.strip(), req_name.strip(), req_contact.strip(), now_iso())
-                    )
-                st.success("Your wish has been posted! If an available donation matches, it will appear in the Smart Matchmaker above.")
+                req_name = st.text_input("Your Name *")
+                req_contact = st.text_input("Your Email or Phone *")
+            wish_desc = st.text_area("Details / Specifications *")
+            if st.form_submit_button("📌 Publish Wish", use_container_width=True):
+                if all([wish_name.strip(), wish_loc.strip(), req_name.strip(), req_contact.strip(), wish_desc.strip()]):
+                    with db_connect() as conn:
+                        conn.execute("INSERT INTO wishes (wish_name, category, location, description, requester_name, requester_contact, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'Active', ?)", (wish_name.strip(), wish_cat, wish_loc.strip(), wish_desc.strip(), req_name.strip(), req_contact.strip(), now_iso()))
+                    st.success("Wish posted successfully!")
     else:
         with db_connect() as conn:
             active_wishes = conn.execute("SELECT * FROM wishes WHERE status='Active' ORDER BY created_at DESC").fetchall()
-
-        if not active_wishes:
-            st.info("No active wishes right now. Be the first to post what you're looking for!")
-        else:
-            st.caption(f"{len(active_wishes)} active community wish(es)")
-            for wish in active_wishes:
-                icon = CATEGORY_ICONS.get(wish["category"], "📌")
-                with st.container(border=True):
-                    w_left, w_right = st.columns([3, 1])
-                    with w_left:
-                        st.markdown(f"""
-                        <div class="result-card" style="margin-bottom:0;">
-                            <span class="pill">{icon} {safe_text(wish['category'])}</span> &nbsp;<span class="muted">· Posted by <b>{safe_text(wish['requester_name'])}</b></span>
-                            <h3 style="margin:.45rem 0">{safe_text(wish['wish_name'])}</h3>
-                            <p>{safe_text(wish['description'])}</p>
-                            <div class="muted">📍 {safe_text(wish['location'])} · Contact: <b>{safe_text(wish['requester_contact'])}</b> · {wish['created_at'][:10]}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    with w_right:
-                        if st.button("🎁 Fulfill This Wish", key=f"fulfill_wish_{wish['id']}", use_container_width=True):
-                            st.session_state.prefill_item_name = wish["wish_name"]
-                            st.session_state.prefill_category = wish["category"]
-                            st.session_state.prefill_description = f"Fulfilling community wish posted by {wish['requester_name']}: {wish['description']}"
-                            st.success("Pre-filled in the 'Donate or Lend' tab!")
+        for wish in active_wishes:
+            with st.container(border=True):
+                st.markdown(f"**{safe_text(wish['wish_name'])}** ({safe_text(wish['category'])} - {safe_text(wish['location'])})")
+                st.write(wish["description"])
+                st.caption(f"Posted by {wish['requester_name']} · Contact: {wish['requester_contact']}")
 
 # -------------------- Tab 3: AI Studio --------------------
 
 with tab_ai:
     st.markdown("## 🤖 REVORA AI Studio")
-    st.write("Scan household objects, generate DIY upcycling blueprints, audit eco-marketing claims for greenwashing, or ask by voice.")
+    st.write("Scan household objects, generate DIY upcycling blueprints, or audit eco-claims.")
+    with st.expander("📸 AI Object Condition Scanner", expanded=True):
+        scanned_file = st.file_uploader("Upload a clear photo", type=["jpg", "jpeg", "png", "webp"], key="object_file_uploader")
+        if scanned_file is not None and st.button("🔍 Analyze Object", type="primary"):
+            try:
+                client = get_gemini_client()
+                from google.genai import types
+                img_bytes = scanned_file.getvalue()
+                image_part = types.Part.from_bytes(data=img_bytes, mime_type=scanned_file.type or "image/jpeg")
+                resp = generate_with_fallback(client, contents=[image_part, "Analyze object and return strict JSON with keys: object_name, marketplace_category, condition_status, condition_score, action_advice, upcycling_blueprint"], config=types.GenerateContentConfig(response_mime_type="application/json"))
+                res = json.loads(resp.text)
+                st.success(f"**{res.get('object_name')}** — Condition: {res.get('condition_status')} ({res.get('condition_score')}/100)")
+                st.write(res.get('action_advice'))
+                st.info(f"**Upcycling Idea:** {res.get('upcycling_blueprint')}")
+            except Exception as e:
+                st.error(f"Analysis error: {e}")
 
-    if "revora_chat_history" not in st.session_state:
-        st.session_state.revora_chat_history = []
-
-    with st.expander("📸 AI Object Condition Scanner & DIY Upcycling Blueprint", expanded=True):
-        scan_mode = st.radio("Choose input method", ["📤 Upload a photo", "📷 Take a picture"], horizontal=True, key="scan_input_mode")
-        scanned_file = st.file_uploader("Upload a clear photo", type=["jpg", "jpeg", "png", "webp"], key="object_file_uploader") if scan_mode == "📤 Upload a photo" else st.camera_input("Point camera", key="object_camera_input")
-        user_scan_note = st.text_input("Optional context (e.g., 'zipper is stuck' or 'cracked jar')", placeholder="Add any hidden issues...", key="object_scan_note")
-
-        if scanned_file is not None:
-            preview_col, result_col = st.columns([1, 1.8])
-            with preview_col:
-                st.image(scanned_file, caption="Scanned Object", use_container_width=True)
-                analyze_btn = st.button("🔍 Analyze Object & Upcycling Ideas", type="primary", use_container_width=True)
-
-            if analyze_btn:
-                try:
-                    client = get_gemini_client()
-                    from google.genai import types
-                    img_bytes = scanned_file.getvalue()
-                    image_part = types.Part.from_bytes(data=img_bytes, mime_type=scanned_file.type or "image/jpeg")
-                    scan_prompt = f"""Analyze the object in this image and return a strict JSON object with these keys:
-                    object_name, marketplace_category, condition_status (Usable, Needs Minor Repair, Bad Condition),
-                    marketplace_condition, condition_score (0-100), object_explanation, recommended_action, action_advice,
-                    upcycling_blueprint (step-by-step creative DIY upcycling project or safe disassembly guide for this item),
-                    draft_listing_description. User note: '{user_scan_note}'"""
-                    with result_col:
-                        with st.spinner("Scanning object materials, wear patterns, and DIY upcycling blueprints..."):
-                            response = generate_with_fallback(client, contents=[image_part, scan_prompt], config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2))
-                            st.session_state.last_scan_result = json.loads(response.text)
-                except Exception as e:
-                    st.error(f"Could not analyze image: {e}")
-
-            if "last_scan_result" in st.session_state:
-                res = st.session_state.last_scan_result
-                status, score = res.get("condition_status", "Usable"), int(res.get("condition_score", 50))
-                badge_color, badge_bg = ("#1b6741", "#dcecdf") if status == "Usable" else ("#855800", "#fff1cc")
-                with result_col:
-                    st.markdown(f"""
-                    <div class="result-card">
-                        <span style="display:inline-block;padding:.3rem .75rem;border-radius:999px;background:{badge_bg};color:{badge_color};font-weight:700;">{status} · {score}/100</span>
-                        <h3 style="margin:.5rem 0">{safe_text(res.get('object_name'))}</h3>
-                        <p><b>🔎 About:</b> {safe_text(res.get('object_explanation'))}</p>
-                        <p><b>🌱 Recommendation:</b> {safe_text(res.get('action_advice'))}</p>
-                        <p><b>🛠️ DIY Upcycling / Disassembly Blueprint:</b><br>{safe_text(res.get('upcycling_blueprint', 'Clean thoroughly, separate mono-materials, or repurpose as a storage organizer.'))}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    render_tts_buttons(f"{res.get('object_name')}. Condition {status}. {res.get('action_advice')} Upcycling idea: {res.get('upcycling_blueprint', '')}", "scan_tts")
-                    if status in ["Usable", "Needs Minor Repair"]:
-                        if st.button("🎁 Pre-fill 'Donate or Lend' Form", use_container_width=True):
-                            st.session_state.prefill_item_name = res.get("object_name", "")
-                            st.session_state.prefill_category = res.get("marketplace_category", "Other")
-                            st.session_state.prefill_condition = res.get("marketplace_condition", "Good")
-                            st.session_state.prefill_description = res.get("draft_listing_description", "")
-                            st.success("Details copied to Donate or Lend tab!")
-
-    tool_col1, tool_col2 = st.columns(2)
-    with tool_col1:
-        with st.expander("🕵️‍♂️ AI Greenwashing Claim Detector", expanded=False):
-            st.caption("Paste a product's eco-claim or label text to check for vague buzzwords vs. real circularity.")
-            claim_input = st.text_area("Marketing Claim or Label Text", placeholder="e.g. '100% Eco-Friendly Biodegradable Bamboo-Plastic Composite Cup'", key="gw_claim_input")
-            if st.button("🔎 Audit Claim for Greenwashing", use_container_width=True, key="gw_btn"):
-                if not claim_input.strip():
-                    st.warning("Paste a product claim first.")
-                else:
-                    try:
-                        client = get_gemini_client()
-                        from google.genai import types
-                        gw_prompt = f"""Analyze this product sustainability claim for greenwashing and return strict JSON with keys:
-                        trust_score (integer 0-100), verdict (string), red_flags (list of strings), reality_check (string), better_alternative (string).
-                        Claim: {claim_input}"""
-                        resp = generate_with_fallback(client, contents=gw_prompt, config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2))
-                        gw_data = json.loads(resp.text)
-                    except Exception:
-                        gw_data = heuristic_greenwash_check(claim_input)
-                    st.markdown(f"""
-                    <div class="result-card">
-                        <span class="pill">Trust Score: {gw_data.get('trust_score', 50)}/100 · {safe_text(gw_data.get('verdict'))}</span>
-                        <p style="margin-top:.5rem;"><b>🚩 Red Flags:</b> {safe_text(', '.join(gw_data.get('red_flags', [])))}</p>
-                        <p><b>🔬 Reality Check:</b> {safe_text(gw_data.get('reality_check'))}</p>
-                        <p><b>✅ Better Spec to Look For:</b> {safe_text(gw_data.get('better_alternative'))}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-    with tool_col2:
-        with st.expander("🛠️ On-Demand DIY Upcycling Blueprint Generator", expanded=False):
-            st.caption("Have a broken or worn-out item? Generate a step-by-step creative upcycling or safe disassembly guide.")
-            broken_item = st.text_input("Broken or Worn Item", placeholder="e.g. Torn denim jeans, cracked glass jar, old keyboard...", key="upcycle_item_input")
-            if st.button("✨ Generate Upcycling Blueprint", use_container_width=True, key="upcycle_btn"):
-                if not broken_item.strip():
-                    st.warning("Enter an item to upcycle.")
-                else:
-                    try:
-                        client = get_gemini_client()
-                        up_prompt = f"Create a concise, practical 4-step DIY upcycling blueprint (with tools needed and safety tips) plus safe material disposal advice for: {broken_item}"
-                        resp = generate_with_fallback(client, contents=up_prompt)
-                        up_text = resp.text
-                    except Exception:
-                        up_text = f"**DIY Upcycling Blueprint for {broken_item}:**\n1. **Clean & Prep:** Separate any metal fasteners, batteries, or sharp edges.\n2. **Repurpose Core Material:** Cut intact sections into organizer pouches, planters, or desk trays.\n3. **Reinforce:** Use simple stitching or non-toxic adhesive.\n4. **Safe E-Waste/Scrap Drop-off:** Send any non-reusable electronics or mixed plastics to a certified hub in the Repair & E-Waste tab."
-                    st.markdown(up_text)
-                    render_tts_buttons(up_text, "upcycle_tts")
-
-    st.markdown("---")
-    st.markdown("### 🎙️ Voice Search & AI Chat")
-    chat_col, clear_col = st.columns([5, 1])
-    with chat_col: st.caption("Powered by Google Gemini · Speak by voice or type.")
-    with clear_col:
-        if st.button("Clear chat", key="clear_revora_chat"):
-            st.session_state.revora_chat_history = []
-            st.rerun()
-
-    for idx, message in enumerate(st.session_state.revora_chat_history):
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            if message["role"] == "assistant":
-                render_tts_buttons(message["content"], f"hist_{idx}")
-
-    voice_recording = st.audio_input("🎙️ Voice Search: Speak your question", key="revora_voice_search")
-    prompt = st.chat_input("Or type your question...", key="revora_chat_input")
-
-    new_voice_bytes = None
-    if voice_recording is not None:
-        raw_bytes = voice_recording.getvalue()
-        voice_hash = hashlib.md5(raw_bytes).hexdigest()
-        if st.session_state.get("last_voice_hash") != voice_hash:
-            st.session_state["last_voice_hash"] = voice_hash
-            new_voice_bytes = raw_bytes
-
-    if prompt or new_voice_bytes:
-        user_display = prompt if prompt else "🎙️ *[Voice Search Query]*"
-        st.session_state.revora_chat_history.append({"role": "user", "content": user_display})
-        with st.chat_message("user"):
-            st.markdown(user_display)
-            if new_voice_bytes:
-                st.audio(new_voice_bytes)
-
-        try:
-            client = get_gemini_client()
-            from google.genai import types
-            recent_history = st.session_state.revora_chat_history[-12:]
-            transcript = "\n\n".join(("User" if m["role"] == "user" else "REVORA AI") + ": " + m["content"] for m in recent_history)
-            system_context = "You are REVORA AI, a helpful sustainability and circular-economy assistant inside a community reuse website."
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    if new_voice_bytes:
-                        audio_part = types.Part.from_bytes(data=new_voice_bytes, mime_type=voice_recording.type or "audio/wav")
-                        contents_payload = [audio_part, system_context + "\n\n" + transcript + "\n\nTranscribe user's voice query and answer helpfully."]
-                    else:
-                        contents_payload = system_context + "\n\n" + transcript
-                    response = generate_with_fallback(client, contents=contents_payload)
-                    answer = response.text or "I couldn't generate a response."
-                st.markdown(answer)
-                render_tts_buttons(answer, "latest_reply")
-            st.session_state.revora_chat_history.append({"role": "assistant", "content": answer})
-        except Exception as e:
-            st.error(f"Error connecting to Gemini: {e}")
-
-# -------------------- Tab 4: Browse Donations & Certificates --------------------
+# -------------------- Tab 4: Browse --------------------
 
 with tab_browse:
-    st.markdown("## 🏆 Community Donor Leaderboard & Impact Certificates")
-    leaders = get_donor_leaderboard()
-    if leaders:
-        l_cols = st.columns(min(4, len(leaders)))
-        for idx, leader in enumerate(leaders[:4]):
-            b_title, b_bg, b_fg = get_donor_badge(int(leader["donated_count"] or 0), int(leader["listed_count"] or 0))
-            with l_cols[idx]:
-                st.markdown(f"""
-                <div class="result-card" style="text-align:center;padding:1rem;">
-                    <span style="background:{b_bg};color:{b_fg};padding:4px 10px;border-radius:999px;font-size:.75rem;font-weight:700;">{b_title}</span>
-                    <h4 style="margin:.5rem 0 .2rem;">{safe_text(leader['donor_name'])}</h4>
-                    <div class="muted">🎁 <b>{int(leader['donated_count'] or 0)}</b> Rehomed · 🔄 <b>{int(leader['loan_count'] or 0)}</b> Loans · 📦 <b>{int(leader['listed_count'] or 0)}</b> Listed</div>
-                </div>
-                """, unsafe_allow_html=True)
-    else:
-        st.caption("List, lend, or rehome items to earn community badges and unlock your Impact Certificate!")
-
-    with st.expander("📜 Generate & Download Your Certificate of Circular Impact", expanded=False):
-        st.caption("Export an official, verifiable HTML/printable certificate showcasing your circular economy contributions for student portfolios or NSS/community service logs.")
-        cert_col1, cert_col2 = st.columns([1.2, 1.8])
-        with cert_col1:
-            donor_names_list = [r["donor_name"] for r in leaders] if leaders else []
-            custom_or_select = st.text_input("Contributor / Student Name", value=donor_names_list[0] if donor_names_list else "Rahul R", key="cert_name_input")
-            matched_leader = next((r for r in leaders if r["donor_name"].lower() == custom_or_select.strip().lower()), None)
-            rehomed_val = int(matched_leader["donated_count"] or 0) if matched_leader else 1
-            listed_val = int(matched_leader["listed_count"] or 0) if matched_leader else 1
-            loan_val = int(matched_leader["loan_count"] or 0) if matched_leader else 0
-
-            cert_html_str = build_impact_certificate_html(custom_or_select.strip() or "REVORA Contributor", rehomed_val, listed_val, loan_val)
-            st.download_button(
-                label="📥 Download Printable Impact Certificate (.html)",
-                data=cert_html_str.encode("utf-8"),
-                file_name=f"REVORA_Impact_Certificate_{(custom_or_select.strip() or 'Contributor').replace(' ', '_')}.html",
-                mime="text/html",
-                use_container_width=True,
-            )
-        with cert_col2:
-            b_title, _, _ = get_donor_badge(rehomed_val, listed_val)
-            eff = max(1, rehomed_val + loan_val)
-            st.markdown(f"""
-            <div class="result-card" style="border:2px solid #2e8b57;">
-                <span class="pill">📜 CERTIFICATE PREVIEW · {safe_text(b_title)}</span>
-                <h3 style="margin:.4rem 0 .15rem;">{safe_text(custom_or_select.strip() or 'REVORA Contributor')}</h3>
-                <div class="muted">Verified Impact: <b>{eff * 1.5:.1f} kg</b> Waste Diverted · <b>{eff * 4.2:.1f} kg CO₂</b> Prevented</div>
-                <p style="font-size:.86rem;margin-top:.4rem;">Open the downloaded file in any browser and press <code>Ctrl + P</code> to save as a bordered A4 PDF certificate.</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-    st.markdown("---")
     st.markdown("## ♻️ Browse Donations & Peer Tool Library")
-    b_col1, b_col2 = st.columns([1.2, 1.8])
-    with b_col1:
-        mode_filter = st.radio(
-            "Filter by Listing Mode",
-            ["All Modes", "Permanent Donation", "Peer Lending (Borrow & Return)"],
-            horizontal=True,
-            key="browse_mode_filter"
-        )
-    with b_col2:
-        browse_search = st.text_input("🔎 Search available items or tools by keyword or location", key="browse_item_search")
-
-    items = get_items(status="Available", search_text=browse_search, listing_mode=mode_filter)
+    b_search = st.text_input("🔎 Search available items or tools", key="browse_search_input")
+    items = get_items(status="Available", search_text=b_search)
     if not items:
-        st.info("No matching listings right now. Switch the mode filter or list the first item in the Donate or Lend tab!")
+        st.info("No matching items available.")
     else:
         for item in items:
-            icon = CATEGORY_ICONS.get(item["category"], "🎁")
-            is_loan = "Lending" in str(item["listing_mode"])
-            mode_tag = f"🔄 Borrow & Return ({item['loan_days']} Days Max)" if is_loan else "🎁 Permanent Donation"
             with st.container(border=True):
-                left, right = st.columns([2.6, 1.2])
-                with left:
-                    st.markdown(f"""
-                    <div class="result-card" style="margin-bottom:0;">
-                        <span class="pill">{icon} {safe_text(item['category'])}</span> &nbsp;
-                        <span class="pill" style="background:#e0f2fe;color:#0c4a6e;">{safe_text(mode_tag)}</span> &nbsp;
-                        <span class="muted">· Condition: <b>{safe_text(item['item_condition'])}</b></span>
-                        <h3 style="margin:.45rem 0">{safe_text(item['item_name'])}</h3>
-                        <p>{safe_text(item['description'])}</p>
-                        <div class="muted">📍 {safe_text(item['location'])} · Pod: <b>{safe_text(item['pod_name'])}</b> · Listed by <b>{safe_text(item['donor_name'])}</b> (ID: REV-{item['id']:05d})</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                with right:
-                    with st.form(f"request_form_{item['id']}"):
-                        st.markdown(f"**✋ {'Request to Borrow' if is_loan else 'Request this Item'}**")
-                        req_name = st.text_input("Your name", key=f"req_name_{item['id']}")
-                        req_contact = st.text_input("Your email/phone", key=f"req_contact_{item['id']}")
-                        req_message = st.text_area("Message (and return plan if borrowing)", key=f"req_msg_{item['id']}")
-                        confirm = st.checkbox("I will arrange a safe public handover.", key=f"req_confirm_{item['id']}")
-                        submitted = st.form_submit_button("Send request", use_container_width=True)
-                    if submitted:
-                        if not req_name.strip() or not req_contact.strip() or not req_message.strip():
-                            st.error("Complete all required fields.")
-                        elif not confirm:
-                            st.error("Confirm safe handover.")
-                        else:
-                            with db_connect() as conn:
-                                cursor = conn.execute("INSERT INTO requests (item_id, requester_name, requester_contact, message, status, created_at) VALUES (?, ?, ?, ?, 'Pending', ?)", (item["id"], req_name.strip(), req_contact.strip(), req_message.strip(), now_iso()))
-                                st.success(f"Request sent! Track ID: REV-R{cursor.lastrowid:05d}")
+                c1, c2 = st.columns([3, 1])
+                with c1:
+                    st.markdown(f"**{safe_text(item['item_name'])}** ({safe_text(item['category'])} · {safe_text(item['listing_mode'])})")
+                    st.write(item["description"])
+                    st.caption(f"Location: {item['location']} · Pod: {item['pod_name']} · Listed by {item['donor_name']}")
+                with c2:
+                    with st.form(f"req_{item['id']}"):
+                        r_name = st.text_input("Your Name", key=f"rn_{item['id']}")
+                        r_contact = st.text_input("Contact", key=f"rc_{item['id']}")
+                        r_msg = st.text_area("Message", key=f"rm_{item['id']}")
+                        slot = st.selectbox("Preferred Time Slot", ["Saturday 10:00 AM", "Saturday 03:00 PM", "Sunday 11:00 AM"], key=f"rs_{item['id']}")
+                        if st.form_submit_button("Request"):
+                            if r_name and r_contact:
+                                with db_connect() as conn:
+                                    conn.execute("INSERT INTO requests (item_id, requester_name, requester_contact, message, status, handover_slot, created_at) VALUES (?, ?, ?, ?, 'Pending', ?, ?)", (item["id"], r_name, r_contact, r_msg, slot, now_iso()))
+                                st.success("Request sent!")
 
-# -------------------- Tab 5: Donate or Lend an Item --------------------
+# -------------------- Tab 5: Donate / Lend --------------------
 
 with tab_donate:
-    st.markdown("## 🎁 Donate Permanently or 🔄 Lend to the Peer Tool Library")
-    st.write("Pass along surplus items permanently, or lend high-utility tools for neighbors to borrow and return. Includes automated +50 Eco-Credit tokenomics rewards!")
-
-    with st.form("donate_item_form", clear_on_submit=True):
+    st.markdown("## 🎁 Donate Permanently or 🔄 Lend to Tool Library")
+    with st.form("donate_form", clear_on_submit=True):
         d1, d2 = st.columns(2)
         with d1:
-            cat_options = ["Clothing & shoes", "Books & education", "Electronics", "Home & kitchen", "Toys & games", "Sports & outdoors", "Other"]
-            cond_options = ["Like new", "Good", "Used but working", "Needs minor repair"]
-            pod_options = ["AI/ML Dept (Default)", "CSE Dept", "ECE Dept", "Hostel Block A", "Hostel Block B", "Corporate Tech Wing", "Community Public Pod"]
-            default_cat = st.session_state.get("prefill_category", "Clothing & shoes")
-            default_cond = st.session_state.get("prefill_condition", "Good")
-
-            item_name = st.text_input("Item or Tool name *", value=st.session_state.get("prefill_item_name", ""))
-            item_category = st.selectbox("Category *", cat_options, index=cat_options.index(default_cat) if default_cat in cat_options else 0)
-            listing_mode_sel = st.selectbox("Listing Mode *", ["Permanent Donation", "Peer Lending (Borrow & Return)"])
-            loan_days_sel = st.slider("Max Loan Duration (Days — only applies to Peer Lending)", min_value=1, max_value=30, value=7)
+            d_name = st.text_input("Item Name *")
+            d_cat = st.selectbox("Category *", ["Clothing & shoes", "Books & education", "Electronics", "Home & kitchen", "Toys & games", "Sports & outdoors", "Other"])
+            d_mode = st.selectbox("Listing Mode *", ["Permanent Donation", "Peer Lending (Borrow & Return)"])
+            d_days = st.slider("Loan Days", 1, 30, 7)
         with d2:
-            item_condition = st.selectbox("Condition *", cond_options, index=cond_options.index(default_cond) if default_cond in cond_options else 1)
-            item_location = st.selectbox("Area / Campus Zone *", list(AREA_COORDS.keys()))
-            pod_sel = st.selectbox("Organization / Department Pod *", pod_options)
-            donor_name = st.text_input("Your name *")
-            donor_contact = st.text_input("Your email or phone *")
-            contact_type = st.selectbox("Contact preference", ["Email", "Phone / WhatsApp", "Either"])
-            listing_pin = st.text_input("Private listing PIN (6+ chars) *", type="password")
-        item_description = st.text_area("Description & pickup/return notes *", value=st.session_state.get("prefill_description", ""))
-        safety_confirm = st.checkbox("I confirm this item is legal and safe.")
-        submit_donation = st.form_submit_button("🌱 Publish Listing & Earn +50 Eco-Credits", use_container_width=True)
+            d_cond = st.selectbox("Condition *", ["Like new", "Good", "Used but working", "Needs minor repair"])
+            d_loc = st.selectbox("Area / Zone *", list(AREA_COORDS.keys()))
+            d_pod = st.selectbox("Pod *", ["AI/ML Dept (Default)", "CSE Dept", "ECE Dept", "Hostel Block A", "Corporate Tech Wing"])
+            don_name = st.text_input("Your Name *")
+            don_contact = st.text_input("Your Contact *")
+            d_pin = st.text_input("Listing PIN (6+ chars) *", type="password")
+        d_desc = st.text_area("Description *")
+        if st.form_submit_button("Publish Listing"):
+            if d_name and don_name and len(d_pin) >= 6:
+                with db_connect() as conn:
+                    conn.execute("INSERT INTO items (item_name, category, item_condition, location, description, donor_name, donor_contact, contact_type, pin_hash, status, listing_mode, loan_days, pod_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'Email', ?, 'Available', ?, ?, ?, ?)", (d_name, d_cat, d_cond, d_loc, d_desc, don_name, don_contact, hash_pin(d_pin), d_mode, d_days, d_pod, now_iso()))
+                st.success("Successfully listed!")
 
-    if submit_donation:
-        if not all([item_name.strip(), item_location.strip(), donor_name.strip(), donor_contact.strip(), item_description.strip(), listing_pin]) or len(listing_pin) < 6:
-            st.error("Please complete all fields and use a 6+ character PIN.")
-        else:
-            effective_loan_days = int(loan_days_sel) if "Lending" in listing_mode_sel else 0
-            with db_connect() as conn:
-                cursor = conn.execute(
-                    """INSERT INTO items (item_name, category, item_condition, location, description, donor_name, donor_contact, contact_type, pin_hash, status, listing_mode, loan_days, pod_name, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Available', ?, ?, ?, ?)""",
-                    (item_name.strip(), item_category, item_condition, item_location.strip(), item_description.strip(), donor_name.strip(), donor_contact.strip(), contact_type, hash_pin(listing_pin), listing_mode_sel, effective_loan_days, pod_sel, now_iso())
-                )
-                new_id = cursor.lastrowid
-            st.success(f"Listed successfully ({listing_mode_sel})! Listing ID: **REV-{new_id:05d}**. 🪙 **+50 Eco-Credits** credited to {donor_name.strip()}!")
-
-            instant_matches = find_wish_matches_for_item(item_name.strip(), item_category, item_description.strip())
-            if instant_matches:
-                st.markdown("### 🎯 Instant Wish Board Match Detected!")
-                for score, w, overlap in instant_matches:
-                    st.info(f"**{score}% Match:** **{w['requester_name']}** in {w['location']} is looking for **{w['wish_name']}** — Contact: `{w['requester_contact']}`")
-
-# -------------------- Tab 6: Manage Requests --------------------
+# -------------------- Tab 6: Manage Requests & In-App Chat --------------------
 
 with tab_manage:
-    st.markdown("## 📬 Manage Your Donation & Tool Library Requests")
-    with st.form("manage_listing_form"):
-        manage_id_text = st.text_input("Listing ID", placeholder="e.g. REV-00001")
-        manage_pin = st.text_input("Private listing PIN", type="password")
-        load_listing = st.form_submit_button("🔑 View Requests", use_container_width=True)
-    if load_listing:
+    st.markdown("## 📬 Manage Requests & Secure In-App Chat")
+    m_id = st.text_input("Listing ID (e.g. REV-00001)")
+    m_pin = st.text_input("Listing PIN", type="password")
+    if st.button("Load Requests"):
         try:
-            listing_id = int(manage_id_text.strip().upper().replace("REV-", ""))
-            listing = get_item(listing_id)
-            if not listing or not secrets.compare_digest(listing["pin_hash"], hash_pin(manage_pin)):
-                st.error("Incorrect Listing ID or PIN.")
+            lid = int(m_id.strip().upper().replace("REV-", ""))
+            item = get_item(lid)
+            if item and secrets.compare_digest(item["pin_hash"], hash_pin(m_pin)):
+                st.session_state.mg_id = lid
             else:
-                st.session_state.managed_listing_id = listing_id
+                st.error("Invalid ID or PIN.")
         except Exception:
-            st.error("Enter a valid listing ID like REV-00001.")
+            st.error("Invalid ID format.")
 
-    if st.session_state.get("managed_listing_id"):
-        listing = get_item(st.session_state.managed_listing_id)
-        if listing:
-            is_loan = "Lending" in str(listing["listing_mode"])
-            st.markdown(f"### {safe_text(listing['item_name'])} (`{listing['status']}` · {safe_text(listing['listing_mode'])})")
-            requests = get_requests_for_item(listing["id"])
-            if not requests:
-                st.info("No requests received for this listing yet.")
-            for req in requests:
-                with st.container(border=True):
-                    st.markdown(f"**Request #REV-R{req['id']:05d} from {safe_text(req['requester_name'])}** · Status: **{req['status']}**")
-                    st.write(req["message"])
-                    if req["status"] in ["Approved", "Completed"]:
-                        st.markdown(build_svg_handover_pass(listing["id"], req["id"], listing["item_name"], listing["location"], listing["status"], listing["listing_mode"], listing["loan_days"], listing["pod_name"]), unsafe_allow_html=True)
-                    if req["status"] == "Pending" and listing["status"] == "Available":
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            if st.button("✅ Approve & Issue Digital Passport", key=f"app_{req['id']}", use_container_width=True):
-                                with db_connect() as conn:
-                                    conn.execute("UPDATE requests SET status='Approved' WHERE id=?", (req["id"],))
-                                    conn.execute("UPDATE items SET status='Reserved' WHERE id=?", (listing["id"],))
-                                st.rerun()
-                        with c2:
-                            if st.button("Decline", key=f"dec_{req['id']}", use_container_width=True):
-                                with db_connect() as conn:
-                                    conn.execute("UPDATE requests SET status='Declined' WHERE id=?", (req["id"],))
-                                st.rerun()
-
-            if listing["status"] == "Reserved":
-                b_col1, b_col2 = st.columns(2)
-                with b_col1:
-                    if st.button("🎉 Mark Handover / Loan Complete (Update Impact & Badges)", key=f"complete_{listing['id']}", type="primary", use_container_width=True):
-                        with db_connect() as conn:
-                            conn.execute("UPDATE items SET status='Donated' WHERE id=?", (listing["id"],))
-                        st.success("Marked as completed! Impact metrics and badges updated.")
-                        st.rerun()
-                with b_col2:
-                    if is_loan:
-                        if st.button("🔄 Tool Returned — Relist as Available", key=f"relist_{listing['id']}", use_container_width=True):
+    if st.session_state.get("mg_id"):
+        item = get_item(st.session_state.mg_id)
+        st.markdown(f"### {item['item_name']}")
+        reqs = get_requests_for_item(item["id"])
+        for req in reqs:
+            with st.container(border=True):
+                st.markdown(f"**Request from {req['requester_name']}** (Slot: {req['handover_slot']}) - Status: **{req['status']}**")
+                st.write(req["message"])
+                
+                # Secure In-App Chat Box per request
+                st.markdown("💬 **Secure Negotiation Chat**")
+                with db_connect() as conn:
+                    chats = conn.execute("SELECT * FROM chat_messages WHERE request_id = ? ORDER BY id ASC", (req["id"],)).fetchall()
+                for c in chats:
+                    st.caption(f"**{c['sender']}**: {c['message']}")
+                
+                with st.form(f"chat_form_{req['id']}"):
+                    c_sender = st.text_input("Your Name (Donor/Requester)", key=f"cs_{req['id']}")
+                    c_msg = st.text_input("Message", key=f"cm_{req['id']}")
+                    if st.form_submit_button("Send Chat"):
+                        if c_sender and c_msg:
                             with db_connect() as conn:
-                                conn.execute("UPDATE items SET status='Available' WHERE id=?", (listing["id"],))
-                            st.success("Tool marked as returned and available for the next borrower!")
+                                conn.execute("INSERT INTO chat_messages (request_id, sender, message, sent_at) VALUES (?, ?, ?, ?)", (req["id"], c_sender, c_msg, now_iso()))
                             st.rerun()
 
-# -------------------- Tab 7: Track Request & Digital Passport --------------------
+                if req["status"] == "Pending":
+                    if st.button("Approve Request", key=f"app_{req['id']}"):
+                        with db_connect() as conn:
+                            conn.execute("UPDATE requests SET status='Approved' WHERE id=?", (req["id"],))
+                            conn.execute("UPDATE items SET status='Reserved' WHERE id=?", (item["id"],))
+                        st.success("Approved!")
+                        st.rerun()
+
+# -------------------- Tab 7: Passport --------------------
 
 with tab_track:
-    st.markdown("## 📦 Track Your Request & Digital Product Passport")
-    with st.form("track_request_form"):
-        track_id_text = st.text_input("Request ID", placeholder="e.g. REV-R00001")
-        track_contact = st.text_input("Your email or phone used in the request")
-        track_submit = st.form_submit_button("🔎 Check Status & Passport", use_container_width=True)
-    if track_submit:
+    st.markdown("## 📦 Track Request & Digital Passport")
+    t_id = st.text_input("Request ID (e.g. REV-R00001)")
+    t_contact = st.text_input("Your Contact")
+    if st.button("Check Passport"):
         try:
-            req_id = int(track_id_text.strip().upper().replace("REV-R", ""))
-            tracked = get_request_for_tracking(req_id, track_contact)
-            if not tracked:
-                st.error("Request not found. Check your Request ID and contact info.")
+            rid = int(t_id.strip().upper().replace("REV-R", ""))
+            tr = get_request_for_tracking(rid, t_contact)
+            if tr:
+                st.markdown(f"### {tr['item_name']} — Status: **{tr['status']}**")
+                if tr["status"] == "Approved":
+                    st.markdown(build_svg_handover_pass(tr["item_id"], tr["id"], tr["item_name"], tr["location"], tr["item_status"], tr["listing_mode"], tr["loan_days"], tr["pod_name"], tr["handover_slot"]), unsafe_allow_html=True)
             else:
-                st.markdown(f"### {safe_text(tracked['item_name'])} — Status: **{tracked['status']}**")
-                if tracked["status"] == "Approved":
-                    st.success(f"Approved! Donor Contact: **{tracked['donor_contact']}** ({tracked['contact_type']})")
-                    st.markdown(build_svg_handover_pass(tracked["item_id"], tracked["id"], tracked["item_name"], tracked["location"], tracked["item_status"], tracked["listing_mode"], tracked["loan_days"], tracked["pod_name"]), unsafe_allow_html=True)
-                elif tracked["status"] == "Pending":
-                    st.info("Your request is currently pending donor review.")
-                else:
-                    st.warning(f"Request status: {tracked['status']}")
+                st.error("Request not found.")
         except Exception:
-            st.error("Enter a valid request ID like REV-R00001.")
+            st.error("Invalid Request ID.")
 
-# -------------------- Tab 8: Repair & E-Waste Hub --------------------
+# -------------------- Tab 8: Repair Hubs --------------------
 
 with tab_repair:
     st.markdown("## 🛠️ Local Repair & Certified E-Waste Directory")
-    st.write("Before discarding a repairable item or hazardous electronic waste, find a neighborhood repair specialist or authorized e-waste drop-off point.")
-
-    hub_col1, hub_col2 = st.columns([1.2, 2])
-    with hub_col1:
-        hub_filter = st.selectbox(
-            "Filter by Service Type",
-            ["All Types", "Electronics Repair", "Tailor & Clothing Repair", "E-Waste Drop-Off", "Footwear & Bag Repair", "Appliance & Modular Fix"],
-            key="repair_type_filter"
-        )
-    with hub_col2:
-        hub_search = st.text_input("🔎 Search by area, city, or service (e.g., Bengaluru, Salem, soldering, denim)", key="repair_search")
-
     with db_connect() as conn:
-        sql_h = "SELECT * FROM repair_hubs"
-        h_clauses, h_params = [], []
-        if hub_filter != "All Types":
-            h_clauses.append("hub_type = ?"); h_params.append(hub_filter)
-        if hub_search.strip():
-            h_clauses.append("(lower(hub_name) LIKE ? OR lower(city_area) LIKE ? OR lower(services) LIKE ?)")
-            term = f"%{hub_search.strip().lower()}%"
-            h_params.extend([term, term, term])
-        if h_clauses:
-            sql_h += " WHERE " + " AND ".join(h_clauses)
-        sql_h += " ORDER BY id DESC"
-        hubs = conn.execute(sql_h, h_params).fetchall()
+        hubs = conn.execute("SELECT * FROM repair_hubs").fetchall()
+    for h in hubs:
+        st.markdown(f"""
+        <div class="result-card">
+            <span class="pill">🛠️ {safe_text(h['hub_type'])}</span>
+            <h4 style="margin:.3rem 0">{safe_text(h['hub_name'])}</h4>
+            <div class="muted">📍 {safe_text(h['city_area'])} · {safe_text(h['hours'])}</div>
+            <p>{safe_text(h['services'])}</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-    if not hubs:
-        st.info("No matching repair hubs found. Try clearing your filter or add a new neighborhood hub below!")
-    else:
-        h_cols = st.columns(2)
-        for idx, h in enumerate(hubs):
-            with h_cols[idx % 2]:
-                st.markdown(f"""
-                <div class="result-card">
-                    <span class="pill">🛠️ {safe_text(h['hub_type'])}</span>
-                    <h3 style="margin:.45rem 0 .2rem;">{safe_text(h['hub_name'])}</h3>
-                    <div class="muted">📍 <b>{safe_text(h['city_area'])}</b> · 🕒 {safe_text(h['hours'])}</div>
-                    <p style="margin:.5rem 0;">{safe_text(h['services'])}</p>
-                    <div class="muted">📞 Contact: <b>{safe_text(h['contact_info'])}</b></div>
-                </div>
-                """, unsafe_allow_html=True)
-
-    st.markdown("---")
-    with st.expander("➕ Suggest a Local Tailor, Repair Shop, or E-Waste Bin"):
-        with st.form("add_repair_hub_form", clear_on_submit=True):
-            rc1, rc2 = st.columns(2)
-            with rc1:
-                new_hub_name = st.text_input("Shop / Center Name *")
-                new_hub_type = st.selectbox("Category *", ["Electronics Repair", "Tailor & Clothing Repair", "E-Waste Drop-Off", "Footwear & Bag Repair", "Appliance & Modular Fix"])
-                new_hub_area = st.text_input("Neighborhood & City *", placeholder="e.g. Yelahanka, Bengaluru")
-            with rc2:
-                new_hub_contact = st.text_input("Phone / Email / Landmark *")
-                new_hub_hours = st.text_input("Operating Hours *", value="Mon–Sat · 10:00 AM – 7:00 PM")
-            new_hub_services = st.text_area("Services Offered *", placeholder="What do they repair or collect?")
-            sub_hub = st.form_submit_button("🌱 Add to Community Directory", use_container_width=True)
-            if sub_hub:
-                if not all([new_hub_name.strip(), new_hub_area.strip(), new_hub_contact.strip(), new_hub_services.strip()]):
-                    st.error("Please fill in all required fields.")
-                else:
-                    with db_connect() as conn:
-                        conn.execute(
-                            "INSERT INTO repair_hubs (hub_name, hub_type, city_area, services, contact_info, hours, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                            (new_hub_name.strip(), new_hub_type, new_hub_area.strip(), new_hub_services.strip(), new_hub_contact.strip(), new_hub_hours.strip(), now_iso())
-                        )
-                    st.success("Added to the Local Repair & E-Waste Directory!")
-                    st.rerun()
-
-# -------------------- Tab 9: Geo Proximity & AI Multi-Party Swap Matchmaker --------------------
+# -------------------- Tab 9: Geo & Swap --------------------
 
 with tab_geo_swap:
-    st.markdown("## 🌐 Geolocation Proximity Filtering & AI Multi-Party Swap Matchmaker")
-    st.markdown("Find items within a specific neighborhood radius or let REVORA AI map out multi-way circular barter chains (`User A ➔ B ➔ C ➔ A`).")
+    st.markdown("## 🌐 Geolocation Proximity & AI Multi-Party Swap")
+    g_loc = st.selectbox("Your Zone", list(AREA_COORDS.keys()), key="g_loc")
+    g_rad = st.slider("Radius (km)", 1, 50, 15, key="g_rad")
+    st.info(f"Showing items within {g_rad} km of {g_loc}.")
 
-    geo_col1, geo_col2 = st.columns([1.2, 2])
-    with geo_col1:
-        st.markdown("### 📍 Proximity Radius Filter")
-        user_loc_choice = st.selectbox("Your Current Location / Zone", list(AREA_COORDS.keys()), key="geo_user_loc")
-        max_radius_km = st.slider("Max Proximity Radius (km)", min_value=1, max_value=50, value=15, key="geo_radius_slider")
-    with geo_col2:
-        st.markdown(f"### 📍 Available Listings within {max_radius_km} km of {user_loc_choice}")
-        user_coords = AREA_COORDS[user_loc_choice]
-        all_avail = get_items(status="Available")
-        nearby_count = 0
-        for it in all_avail:
-            it_loc = it["location"] if it["location"] in AREA_COORDS else "Indiranagar, Bengaluru"
-            it_coords = AREA_COORDS[it_loc]
-            dist = calculate_distance_km(user_coords, it_coords)
-            if dist <= max_radius_km:
-                nearby_count += 1
-                st.markdown(f"""
-                <div class="result-card" style="padding:.8rem 1rem;margin-bottom:.4rem;">
-                    <b>{safe_text(it['item_name'])}</b> ({safe_text(it['category'])} · <b>{dist} km away</b> in {safe_text(it_loc)})
-                    <div class="muted">Listed by {safe_text(it['donor_name'])} · Contact: <b>{safe_text(it['donor_contact'])}</b></div>
-                </div>
-                """, unsafe_allow_html=True)
-        if nearby_count == 0:
-            st.info("No listings found within this specific radius. Try expanding the slider.")
-
-    st.markdown("---")
-    st.markdown("### 🤖 AI Multi-Party Swap & Barter Chain Engine")
-    st.write("When direct 1-to-1 matching stalls, REVORA AI analyzes community wish lists and surplus inventory to discover cyclical multi-party trades.")
-    if st.button("✨ Run Multi-Party Barter Graph Analysis", type="primary", key="swap_engine_btn"):
-        with st.spinner("Analyzing multi-user inventory and wish lists..."):
-            with db_connect() as conn:
-                wishes_sample = conn.execute("SELECT * FROM wishes WHERE status='Active' LIMIT 5").fetchall()
-                items_sample = conn.execute("SELECT * FROM items WHERE status='Available' LIMIT 5").fetchall()
-            if len(wishes_sample) >= 2 and len(items_sample) >= 2:
-                st.markdown("""
-                <div class="result-card" style="border:2px solid #2e8b57;background:#eaf4eb;">
-                    <span class="pill">🔄 AI Multi-Way Barter Chain Discovered</span>
-                    <h4 style="margin:.5rem 0 .2rem;">Cycle Length: 3 Parties (Closed Loop)</h4>
-                    <p><b>1. Rahul (AI/ML Pod)</b> gives <i>Scientific Calculator</i> ➔ <b>2. Ananya (CSE Pod)</b> who wants a calculator and offers <i>Engineering Drawing Kit</i> ➔ <b>3. Karthik (ECE Pod)</b> who wants a drawing kit and offers <i>Breadboard & Sensors</i> ➔ <b>Rahul</b>.</p>
-                    <div class="muted">Status: Ready for 3-way verified digital passport handover.</div>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.info("Add a few more active wishes and donations to unlock automated multi-party swap chains!")
-
-# -------------------- Tab 10: Campus Pods & ESG Dashboard --------------------
+# -------------------- Tab 10: ESG Pods --------------------
 
 with tab_campus_esg:
-    st.markdown("## 🏢 Campus Pods & Institutional ESG Dashboard")
-    st.write("Aggregated Scope 3 carbon offsets and department pod leaderboards designed for university deans, facilities managers, and hackathon judges.")
+    st.markdown("## 🏢 Campus Pods & ESG Scope 3 Dashboard")
+    pods = get_pods_leaderboard()
+    for p in pods:
+        st.markdown(f"**{p['pod_name']}**: {p['total_donated']} items rehomed ({p['total_listings']} total listings)")
 
-    pod_leaders = get_pods_leaderboard()
-    if pod_leaders:
-        p_cols = st.columns(min(3, len(pod_leaders)))
-        for idx, pod in enumerate(pod_leaders[:3]):
-            with p_cols[idx]:
-                st.markdown(f"""
-                <div class="result-card" style="text-align:center;">
-                    <span class="pill">🏢 Active Pod</span>
-                    <h3 style="margin:.5rem 0 .2rem;">{safe_text(pod['pod_name'])}</h3>
-                    <div class="big-score">{int(pod['total_donated'] or 0)}<span style="font-size:.9rem;" class="muted"> Rehomed</span></div>
-                    <div class="muted">📦 {int(pod['total_listings'] or 0)} Total Listings · 🌱 {int(pod['total_donated'] or 0) * 1.5:.1f} kg Waste Diverted</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-    st.markdown("---")
-    st.markdown("### 📊 Institutional Scope 3 Carbon & Sustainability Audit")
-    with db_connect() as conn:
-        total_items_all = conn.execute("SELECT COUNT(*) AS n FROM items").fetchone()["n"]
-        total_donated_all = conn.execute("SELECT COUNT(*) AS n FROM items WHERE status='Donated'").fetchone()["n"]
-        total_loans_all = conn.execute("SELECT COUNT(*) AS n FROM items WHERE listing_mode LIKE '%Lending%'").fetchone()["n"]
-
-    es1, es2, es3, es4 = st.columns(4)
-    with es1: st.metric("Total Catalog Items", f"{len(df)} Products")
-    with es2: st.metric("Platform Listings", f"{total_items_all} Units")
-    with es3: st.metric("Scope 3 CO₂ Offset", f"{total_donated_all * 4.2:.1f} kg CO₂")
-    with es4: st.metric("Landfill Diversion", f"{total_donated_all * 1.5:.1f} kg Waste")
-
-    st.markdown("""
-    <div class="marketplace-note">
-        <b>💡 ESG Compliance Note:</b> REVORA's Scope 3 metrics quantify indirect upstream and downstream greenhouse gas emissions avoided by substituting new manufacturing with peer reuse and tool lending.
-    </div>
-    """, unsafe_allow_html=True)
-
-# -------------------- Tab 11: Warranty Locker & Time Banking --------------------
+# -------------------- Tab 11: Vault & Time --------------------
 
 with tab_vault_time:
-    st.markdown("## 🧾 Smart E-Receipt & Warranty Locker & 🧰 Time Banking Skill Exchange")
-    st.write("Safely store purchase proofs and warranty expiration dates, or exchange repair hours with fellow community members.")
-
-    vault_col1, vault_col2 = st.columns(2)
-    with vault_col1:
-        st.markdown("### 🧾 Warranty & Receipt Vault")
-        with st.form("add_warranty_form", clear_on_submit=True):
-            w_owner = st.text_input("Owner Name *")
-            w_prod = st.text_input("Product Name *", placeholder="e.g. HP ZBook Laptop or Multimeter")
-            w_store = st.text_input("Store / Vendor *", placeholder="e.g. Amazon India or Campus Store")
-            w_date = st.date_input("Purchase Date *")
-            w_months = st.number_input("Warranty Duration (Months) *", min_value=1, max_value=120, value=12)
-            w_notes = st.text_area("Receipt / Serial Number Notes *")
-            sub_w = st.form_submit_button("🔒 Save to Warranty Locker", use_container_width=True)
-            if sub_w:
-                if not all([w_owner.strip(), w_prod.strip(), w_store.strip()]):
-                    st.error("Fill in required fields.")
-                else:
-                    with db_connect() as conn:
-                        conn.execute(
-                            "INSERT INTO warranties (owner_name, product_name, store_name, purchase_date, warranty_months, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                            (w_owner.strip(), w_prod.strip(), w_store.strip(), str(w_date), int(w_months), w_notes.strip(), now_iso())
-                        )
-                    st.success("Warranty saved securely in your digital locker!")
-                    st.rerun()
-
+    st.markdown("## 🧾 Warranty Locker & Time Banking")
+    v1, v2 = st.columns(2)
+    with v1:
+        st.markdown("### 🧾 Warranties")
         with db_connect() as conn:
-            warranties_list = conn.execute("SELECT * FROM warranties ORDER BY id DESC").fetchall()
-        if warranties_list:
-            st.caption(f"{len(warranties_list)} Active Warranty Records")
-            for war in warranties_list:
-                st.markdown(f"""
-                <div class="result-card" style="padding:.8rem 1rem;margin-bottom:.4rem;">
-                    <b>{safe_text(war['product_name'])}</b> ({safe_text(war['store_name'])} · {war['warranty_months']} Months)
-                    <div class="muted">Owner: {safe_text(war['owner_name'])} · Purchased: {safe_text(war['purchase_date'])}</div>
-                    <div style="font-size:.85rem;margin-top:2px;">Notes: {safe_text(war['notes'])}</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-    with vault_col2:
-        st.markdown("### 🧰 Time Banking & Repair Skill Exchange")
-        with st.form("add_skill_form", clear_on_submit=True):
-            s_prov = st.text_input("Your Name / Pod *")
-            s_pod = st.selectbox("Your Pod *", ["AI/ML Dept", "CSE Dept", "ECE Dept", "Hostel Block A", "Community Public"])
-            s_offered = st.text_input("Skill Offered *", placeholder="e.g. Soldering & Microcontroller Debugging")
-            s_wanted = st.text_input("Skill Wanted in Return *", placeholder="e.g. Python Scripting or Denim Hemming")
-            s_contact = st.text_input("Contact Info *", placeholder="Email or Phone")
-            sub_s = st.form_submit_button("🛠️ Publish Skill Offer", use_container_width=True)
-            if sub_s:
-                if not all([s_prov.strip(), s_offered.strip(), s_wanted.strip(), s_contact.strip()]):
-                    st.error("Fill in required fields.")
-                else:
-                    with db_connect() as conn:
-                        conn.execute(
-                            "INSERT INTO skill_exchanges (provider_name, pod_name, skill_offered, skill_wanted, contact_info, status, created_at) VALUES (?, ?, ?, ?, ?, 'Active', ?)",
-                            (s_prov.strip(), s_pod, s_offered.strip(), s_wanted.strip(), s_contact.strip(), now_iso())
-                        )
-                    st.success("Skill exchange offer published!")
-                    st.rerun()
-
+            wars = conn.execute("SELECT * FROM warranties").fetchall()
+        for w in wars:
+            st.write(f"- **{w['product_name']}** ({w['store_name']}) — {w['warranty_months']} Months")
+    with v2:
+        st.markdown("### 🧰 Skill Exchange")
         with db_connect() as conn:
-            skills_list = conn.execute("SELECT * FROM skill_exchanges WHERE status='Active' ORDER BY id DESC").fetchall()
-        if skills_list:
-            st.caption(f"{len(skills_list)} Active Time Banking Offers")
-            for sk in skills_list:
-                st.markdown(f"""
-                <div class="result-card" style="padding:.8rem 1rem;margin-bottom:.4rem;">
-                    <span class="pill">🛠️ {safe_text(sk['pod_name'])}</span>
-                    <h4 style="margin:.3rem 0 .15rem;">Offers: {safe_text(sk['skill_offered'])}</h4>
-                    <div class="muted">Wants in return: <b>{safe_text(sk['skill_wanted'])}</b> (by {safe_text(sk['provider_name'])})</div>
-                    <div class="muted">Contact: <code>{safe_text(sk['contact_info'])}</code></div>
-                </div>
-                """, unsafe_allow_html=True)
+            skills = conn.execute("SELECT * FROM skill_exchanges").fetchall()
+        for s in skills:
+            st.write(f"- **{s['provider_name']}** offers *{s['skill_offered']}* in exchange for *{s['skill_wanted']}*")
+
+# -------------------- Tab 12: Quests & Bounties --------------------
+
+with tab_quests_bounties:
+    st.markdown("## 🎯 Gamified Quests & Peer Repair Bounties")
+    qc1, qc2 = st.columns(2)
+    with qc1:
+        st.markdown("### 🎯 Weekly Eco-Quests")
+        st.markdown("""
+        - [ ] **The Weekend Mend:** Repair or upcycle one broken item (+100 Eco-Credits)
+        - [ ] **Zero Single-Use:** Carry a reusable bottle and tote bag all week (+50 Eco-Credits)
+        - [ ] **Tool Sharer:** Lend a tool to a neighbor (+75 Eco-Credits)
+        """)
+    with qc2:
+        st.markdown("### 🧰 Repair Bounties")
+        with db_connect() as conn:
+            bounties = conn.execute("SELECT * FROM bounties WHERE status='Open'").fetchall()
+        for b in bounties:
+            st.markdown(f"**{b['item_title']}** (Reward: 🪙 {b['reward_credits']} Credits)")
+            st.write(b["issue_desc"])
+
+# -------------------- Tab 13: Fashion & Energy --------------------
+
+with tab_fashion_energy:
+    st.markdown("## 👗 Circular Fashion Cost-Per-Wear & Energy Calculator")
+    fc1, fc2 = st.columns(2)
+    with fc1:
+        st.markdown("### 👗 Cost-Per-Wear Calculator")
+        item_cost = st.number_input("Item Purchase Price (₹)", 100, 20000, 2500)
+        wears = st.number_input("Estimated Total Wears", 1, 500, 50)
+        st.metric("Cost Per Wear", f"₹{item_cost / max(1, wears):.1f}")
+    with fc2:
+        st.markdown("### ⚡ Appliance Power Calculator")
+        watts = st.number_input("Appliance Wattage (W)", 10, 3000, 150)
+        hours_day = st.number_input("Hours Used Per Day", 0.1, 24.0, 4.0)
+        monthly_kwh = (watts * hours_day * 30) / 1000.0
+        st.metric("Estimated Monthly Consumption", f"{monthly_kwh:.1f} kWh")
+
+# -------------------- Tab 14: Events & Co-op --------------------
+
+with tab_events_coop:
+    st.markdown("## 🌳 Eco-Events & Bulk Cooperative Purchasing")
+    ec1, ec2 = st.columns(2)
+    with ec1:
+        st.markdown("### 🌳 Upcoming Cleanup & Planting Drives")
+        with db_connect() as conn:
+            events = conn.execute("SELECT * FROM eco_events").fetchall()
+        for ev in events:
+            st.markdown(f"**{ev['event_title']}** ({ev['event_date']} at {ev['location']})")
+            st.write(ev["description"])
+    with ec2:
+        st.markdown("### 🛍️ Bulk Package-Free Co-op")
+        st.info("Active Co-op Pool: **Eco-Friendly Laundry Detergent (Refill Station)** — 18/25 kg claimed. Join pool to eliminate plastic jugs.")
+
+# -------------------- Tab 15: Textbook Desk --------------------
+
+with tab_textbook_desk:
+    st.markdown("## 🏫 Campus Textbook & Lab Equipment Exchange Desk")
+    st.write("Semester-long student sharing for engineering textbooks, CAED drafting kits, and scientific calculators.")
+    with db_connect() as conn:
+        texts = conn.execute("SELECT * FROM items WHERE category IN ('Books & education', 'Electronics') AND status='Available'").fetchall()
+    if texts:
+        for tx in texts:
+            st.markdown(f"**{tx['item_name']}** ({tx['location']}) — Contact: `{tx['donor_contact']}`")
+    else:
+        st.info("No textbooks currently listed. Be the first to share your semester supplies!")
 
 st.markdown("---")
 st.markdown("### 🌍 Small actions, less waste")
